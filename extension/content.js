@@ -401,6 +401,158 @@
     return promise;
   };
 
+  // KEYBOARD NAVIGATION
+  let currentRowIndex = -1;
+  let currentColIndex = 0; // 0 = Category, 1 = Notes
+
+  function getMbtRows() {
+    return document.querySelectorAll('tbody tr[data-mbt-id]');
+  }
+
+  function focusCell(rowIndex, colIndex) {
+    const rows = getMbtRows();
+    if (rowIndex < 0 || rowIndex >= rows.length) return false;
+    
+    const row = rows[rowIndex];
+    const cells = row.querySelectorAll('.mbt-cell');
+    // cells[0] = Category (select), cells[1] = Notes (input), cells[2] = Status
+    
+    let targetElement = null;
+    if (colIndex === 0) {
+      targetElement = cells[0] && cells[0].querySelector('select');
+    } else if (colIndex === 1) {
+      targetElement = cells[1] && cells[1].querySelector('input');
+    }
+    
+    if (targetElement) {
+      targetElement.focus();
+      if (targetElement.select) targetElement.select();
+      return true;
+    }
+    return false;
+  }
+
+  document.addEventListener('keydown', function(e) {
+    const rows = getMbtRows();
+    if (rows.length === 0) return;
+
+    // Only handle if we're inside an mbt input/select
+    const activeElement = document.activeElement;
+    const isInMbtCell = activeElement && activeElement.closest && activeElement.closest('.mbt-cell');
+    
+    if (!isInMbtCell) {
+      // If not in any cell, start from first row on arrow down
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        currentRowIndex = 0;
+        currentColIndex = 0;
+        focusCell(currentRowIndex, currentColIndex);
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        currentRowIndex = Math.min(currentRowIndex + 1, rows.length - 1);
+        focusCell(currentRowIndex, currentColIndex);
+        break;
+        
+      case 'ArrowUp':
+        e.preventDefault();
+        currentRowIndex = Math.max(currentRowIndex - 1, 0);
+        focusCell(currentRowIndex, currentColIndex);
+        break;
+        
+      case 'ArrowRight':
+        e.preventDefault();
+        currentColIndex = Math.min(currentColIndex + 1, 1); // Max col 1 (Notes)
+        focusCell(currentRowIndex, currentColIndex);
+        break;
+        
+      case 'ArrowLeft':
+        e.preventDefault();
+        currentColIndex = Math.max(currentColIndex - 1, 0); // Min col 0 (Category)
+        focusCell(currentRowIndex, currentColIndex);
+        break;
+        
+      case 'Enter':
+        e.preventDefault();
+        // Save current row
+        const currentRow = rows[currentRowIndex];
+        if (currentRow) {
+          const txId = currentRow.getAttribute('data-mbt-id');
+          const select = currentRow.querySelector('select');
+          const input = currentRow.querySelector('input[type="text"]');
+          
+          if (txId && select && input) {
+            // Trigger save
+            const cells = currentRow.querySelectorAll('td');
+            const dateCell = cells[0];
+            const descCell = cells[1];
+            const amtCell = cells[3];
+            
+            if (dateCell && descCell && amtCell) {
+              const dateTxt = dateCell.textContent ? dateCell.textContent.trim() : '';
+              const descTxt = descCell.textContent ? descCell.textContent.trim() : '';
+              const amtTxt = amtCell.textContent ? amtCell.textContent.trim() : '';
+              const date = parseDate(dateTxt);
+              const amount = parseAmount(amtTxt);
+              
+              if (date) {
+                saveTx(txId, {
+                  txId: txId, date: date, description: descTxt, amount: amount,
+                  category: select.value, notes: input.value,
+                  savedAt: new Date().toISOString()
+                });
+                
+                // Show checkmark
+                const statusCell = currentRow.querySelectorAll('.mbt-cell')[2];
+                if (statusCell && select.value) {
+                  statusCell.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
+                }
+              }
+            }
+          }
+        }
+        
+        // Move to next row
+        currentRowIndex = Math.min(currentRowIndex + 1, rows.length - 1);
+        currentColIndex = 0; // Reset to Category column
+        focusCell(currentRowIndex, currentColIndex);
+        break;
+    }
+  });
+
+  // Track which row/col is focused
+  document.addEventListener('focusin', function(e) {
+    const target = e.target;
+    if (target.tagName === 'SELECT' || target.tagName === 'INPUT') {
+      const row = target.closest && target.closest('tr[data-mbt-id]');
+      if (row) {
+        const rows = getMbtRows();
+        // Find row index
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i] === row) {
+            currentRowIndex = i;
+            break;
+          }
+        }
+        // Determine column
+        const cell = target.closest('.mbt-cell');
+        if (cell) {
+          const cells = row.querySelectorAll('.mbt-cell');
+          for (let i = 0; i < cells.length; i++) {
+            if (cells[i] === cell) {
+              currentColIndex = (i === 0) ? 0 : (i === 1) ? 1 : currentColIndex;
+              break;
+            }
+          }
+        }
+      }
+    }
+  });
+
   window.MBT = {
     reprocess: resetAndProcess,
     process: process,
