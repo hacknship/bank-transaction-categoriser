@@ -401,157 +401,222 @@
     return promise;
   };
 
-  // KEYBOARD NAVIGATION
-  let currentRowIndex = -1;
-  let currentColIndex = 0; // 0 = Category, 1 = Notes
+  // KEYBOARD NAVIGATION - Version 2
+  console.log('[MBT] Setting up keyboard navigation...');
+  
+  let kbCurrentRow = 0;
+  let kbCurrentCol = 0; // 0 = Category, 1 = Notes
 
   function getMbtRows() {
     return document.querySelectorAll('tbody tr[data-mbt-id]');
   }
 
-  function focusCell(rowIndex, colIndex) {
+  function focusCell(rowIdx, colIdx) {
+    console.log('[KB] focusCell called - row:', rowIdx, 'col:', colIdx);
     const rows = getMbtRows();
-    if (rowIndex < 0 || rowIndex >= rows.length) return false;
+    console.log('[KB] Total rows found:', rows.length);
     
-    const row = rows[rowIndex];
-    const cells = row.querySelectorAll('.mbt-cell');
-    // cells[0] = Category (select), cells[1] = Notes (input), cells[2] = Status
-    
-    let targetElement = null;
-    if (colIndex === 0) {
-      targetElement = cells[0] && cells[0].querySelector('select');
-    } else if (colIndex === 1) {
-      targetElement = cells[1] && cells[1].querySelector('input');
+    if (rowIdx < 0 || rowIdx >= rows.length) {
+      console.log('[KB] Row index out of bounds');
+      return false;
     }
     
-    if (targetElement) {
-      targetElement.focus();
-      if (targetElement.select) targetElement.select();
+    const row = rows[rowIdx];
+    const cells = row.querySelectorAll('.mbt-cell');
+    console.log('[KB] Cells in row:', cells.length);
+    
+    let target = null;
+    if (colIdx === 0 && cells[0]) {
+      target = cells[0].querySelector('select');
+    } else if (colIdx === 1 && cells[1]) {
+      target = cells[1].querySelector('input');
+    }
+    
+    if (target) {
+      console.log('[KB] Focusing element:', target.tagName);
+      target.focus();
+      if (target.select) target.select();
+      kbCurrentRow = rowIdx;
+      kbCurrentCol = colIdx;
       return true;
     }
+    console.log('[KB] No target element found');
     return false;
   }
 
-  document.addEventListener('keydown', function(e) {
-    const rows = getMbtRows();
-    if (rows.length === 0) return;
-
-    // Only handle if we're inside an mbt input/select
-    const activeElement = document.activeElement;
-    const isInMbtCell = activeElement && activeElement.closest && activeElement.closest('.mbt-cell');
+  function saveCurrentRow(row) {
+    console.log('[KB] saveCurrentRow called');
+    const txId = row.getAttribute('data-mbt-id');
+    const select = row.querySelector('select');
+    const input = row.querySelector('input[type="text"]');
     
-    if (!isInMbtCell) {
-      // If not in any cell, start from first row on arrow down
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        currentRowIndex = 0;
-        currentColIndex = 0;
-        focusCell(currentRowIndex, currentColIndex);
+    if (!txId || !select || !input) {
+      console.log('[KB] Missing elements for save');
+      return;
+    }
+    
+    const cells = row.querySelectorAll('td');
+    const dateCell = cells[0];
+    const descCell = cells[1];
+    const amtCell = cells[3];
+    
+    if (!dateCell || !descCell || !amtCell) {
+      console.log('[KB] Missing table cells');
+      return;
+    }
+    
+    const dateTxt = dateCell.textContent ? dateCell.textContent.trim() : '';
+    const descTxt = descCell.textContent ? descCell.textContent.trim() : '';
+    const amtTxt = amtCell.textContent ? amtCell.textContent.trim() : '';
+    const date = parseDate(dateTxt);
+    const amount = parseAmount(amtTxt);
+    
+    if (date) {
+      saveTx(txId, {
+        txId: txId, date: date, description: descTxt, amount: amount,
+        category: select.value, notes: input.value,
+        savedAt: new Date().toISOString()
+      });
+      
+      // Show checkmark
+      const cells = row.querySelectorAll('.mbt-cell');
+      const statusCell = cells[2];
+      if (statusCell && select.value) {
+        statusCell.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
+      }
+    }
+  }
+
+  document.addEventListener('keydown', function(e) {
+    console.log('[KB] Key pressed:', e.key, 'Shift:', e.shiftKey, 'Meta:', e.metaKey, 'Ctrl:', e.ctrlKey);
+    
+    // PAGINATION SHORTCUTS: Cmd/Ctrl + , (prev) or . (next)
+    if ((e.metaKey || e.ctrlKey) && (e.key === ',' || e.key === '.')) {
+      e.preventDefault();
+      console.log('[KB] Pagination shortcut detected');
+      
+      if (e.key === ',') {
+        // Previous page
+        const prevBtn = document.querySelector('.SavingAccountContainer---back_arrow---FqLBL, [class*="back_arrow"], [class*="prev_arrow"]');
+        if (prevBtn) {
+          console.log('[KB] Clicking previous button');
+          prevBtn.click();
+        } else {
+          console.log('[KB] Previous button not found');
+        }
+      } else {
+        // Next page
+        const nextBtn = document.querySelector('.SavingAccountContainer---next_arrow---jbdUO, [class*="next_arrow"]');
+        if (nextBtn) {
+          console.log('[KB] Clicking next button');
+          nextBtn.click();
+        } else {
+          console.log('[KB] Next button not found');
+        }
       }
       return;
     }
+    
+    const rows = getMbtRows();
+    console.log('[KB] Total rows:', rows.length);
+    if (rows.length === 0) return;
 
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        currentRowIndex = Math.min(currentRowIndex + 1, rows.length - 1);
-        focusCell(currentRowIndex, currentColIndex);
-        break;
-        
-      case 'ArrowUp':
-        e.preventDefault();
-        currentRowIndex = Math.max(currentRowIndex - 1, 0);
-        focusCell(currentRowIndex, currentColIndex);
-        break;
-        
-      case 'ArrowRight':
-        e.preventDefault();
-        currentColIndex = Math.min(currentColIndex + 1, 1); // Max col 1 (Notes)
-        focusCell(currentRowIndex, currentColIndex);
-        break;
-        
-      case 'ArrowLeft':
-        e.preventDefault();
-        currentColIndex = Math.max(currentColIndex - 1, 0); // Min col 0 (Category)
-        focusCell(currentRowIndex, currentColIndex);
-        break;
-        
-      case 'Enter':
-        e.preventDefault();
-        // Save current row
-        const currentRow = rows[currentRowIndex];
-        if (currentRow) {
-          const txId = currentRow.getAttribute('data-mbt-id');
-          const select = currentRow.querySelector('select');
-          const input = currentRow.querySelector('input[type="text"]');
-          
-          if (txId && select && input) {
-            // Trigger save
-            const cells = currentRow.querySelectorAll('td');
-            const dateCell = cells[0];
-            const descCell = cells[1];
-            const amtCell = cells[3];
-            
-            if (dateCell && descCell && amtCell) {
-              const dateTxt = dateCell.textContent ? dateCell.textContent.trim() : '';
-              const descTxt = descCell.textContent ? descCell.textContent.trim() : '';
-              const amtTxt = amtCell.textContent ? amtCell.textContent.trim() : '';
-              const date = parseDate(dateTxt);
-              const amount = parseAmount(amtTxt);
-              
-              if (date) {
-                saveTx(txId, {
-                  txId: txId, date: date, description: descTxt, amount: amount,
-                  category: select.value, notes: input.value,
-                  savedAt: new Date().toISOString()
-                });
-                
-                // Show checkmark
-                const statusCell = currentRow.querySelectorAll('.mbt-cell')[2];
-                if (statusCell && select.value) {
-                  statusCell.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
-                }
-              }
-            }
+    const active = document.activeElement;
+    console.log('[KB] Active element:', active ? active.tagName : 'none');
+    
+    const isSelect = active && active.tagName === 'SELECT';
+    const isInput = active && active.tagName === 'INPUT';
+    const isInMbt = active && active.closest && active.closest('.mbt-cell');
+    
+    // SHIFT + UP/DOWN: Navigate between rows
+    if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      console.log('[KB] Shift+Arrow detected');
+      
+      // Update current position from focused element
+      if (isInMbt) {
+        const row = active.closest('tr[data-mbt-id]');
+        if (row) {
+          for (let i = 0; i < rows.length; i++) {
+            if (rows[i] === row) kbCurrentRow = i;
           }
         }
-        
-        // Move to next row
-        currentRowIndex = Math.min(currentRowIndex + 1, rows.length - 1);
-        currentColIndex = 0; // Reset to Category column
-        focusCell(currentRowIndex, currentColIndex);
-        break;
-    }
-  });
-
-  // Track which row/col is focused
-  document.addEventListener('focusin', function(e) {
-    const target = e.target;
-    if (target.tagName === 'SELECT' || target.tagName === 'INPUT') {
-      const row = target.closest && target.closest('tr[data-mbt-id]');
-      if (row) {
-        const rows = getMbtRows();
-        // Find row index
-        for (let i = 0; i < rows.length; i++) {
-          if (rows[i] === row) {
-            currentRowIndex = i;
-            break;
-          }
-        }
-        // Determine column
-        const cell = target.closest('.mbt-cell');
+        const cell = active.closest('.mbt-cell');
         if (cell) {
-          const cells = row.querySelectorAll('.mbt-cell');
-          for (let i = 0; i < cells.length; i++) {
-            if (cells[i] === cell) {
-              currentColIndex = (i === 0) ? 0 : (i === 1) ? 1 : currentColIndex;
-              break;
-            }
+          const rowCells = row.querySelectorAll('.mbt-cell');
+          for (let i = 0; i < rowCells.length; i++) {
+            if (rowCells[i] === cell) kbCurrentCol = (i === 0) ? 0 : 1;
           }
         }
       }
+      
+      if (e.key === 'ArrowDown') {
+        kbCurrentRow = Math.min(kbCurrentRow + 1, rows.length - 1);
+      } else {
+        kbCurrentRow = Math.max(kbCurrentRow - 1, 0);
+      }
+      
+      focusCell(kbCurrentRow, kbCurrentCol);
+      return;
+    }
+    
+    // ENTER: Save and move to next field
+    if (e.key === 'Enter' && (isSelect || isInput)) {
+      console.log('[KB] Enter pressed on', isSelect ? 'SELECT' : 'INPUT');
+      
+      const row = active.closest('tr[data-mbt-id]');
+      if (!row) {
+        console.log('[KB] No parent row found');
+        return;
+      }
+      
+      // Update position
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i] === row) kbCurrentRow = i;
+      }
+      kbCurrentCol = isSelect ? 0 : 1;
+      
+      // Save current row
+      saveCurrentRow(row);
+      
+      if (isSelect) {
+        // In Category → move to Notes (same row)
+        console.log('[KB] Moving to Notes (same row)');
+        e.preventDefault();
+        kbCurrentCol = 1;
+        focusCell(kbCurrentRow, kbCurrentCol);
+      } else {
+        // In Notes → move to Category (next row)
+        console.log('[KB] Moving to Category (next row)');
+        e.preventDefault();
+        kbCurrentRow = Math.min(kbCurrentRow + 1, rows.length - 1);
+        kbCurrentCol = 0;
+        focusCell(kbCurrentRow, kbCurrentCol);
+      }
+      return;
+    }
+    
+    // REGULAR ARROWS (without Shift): Only when NOT in dropdown
+    if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // Only handle if in mbt cell
+        if (!isInMbt) return;
+        
+        e.preventDefault();
+        console.log('[KB] Arrow Left/Right');
+        
+        if (e.key === 'ArrowRight') {
+          kbCurrentCol = Math.min(kbCurrentCol + 1, 1);
+        } else {
+          kbCurrentCol = Math.max(kbCurrentCol - 1, 0);
+        }
+        
+        focusCell(kbCurrentRow, kbCurrentCol);
+      }
     }
   });
+
+  console.log('[MBT] Keyboard navigation setup complete');
 
   window.MBT = {
     reprocess: resetAndProcess,
