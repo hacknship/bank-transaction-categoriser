@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maybank Budget Tracker</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+      color: white;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .header p {
+      font-size: 12px;
+      opacity: 0.9;
+      margin-top: 4px;
+    }
+
+    .content {
+      padding: 16px;
+    }
+
+    .status-card {
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .status-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .status-label {
+      font-size: 13px;
+      color: #666;
+    }
+
+    .status-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .status-value.active {
+      color: #28a745;
+    }
+
+    .status-value.inactive {
+      color: #dc3545;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 8px;
+    }
+
+    .btn-primary {
+      background: #007bff;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #0056b3;
+    }
+
+    .btn-secondary {
+      background: white;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+
+    .btn-secondary:hover {
+      background: #f8f9fa;
+    }
+
+    .shortcuts {
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .shortcuts h3 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    .shortcut-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 4px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .shortcut-row:last-child {
+      border-bottom: none;
+    }
+
+    .shortcut-key {
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+    }
+
+    .footer {
+      text-align: center;
+      padding: 12px;
+      font-size: 11px;
+      color: #999;
+    }
+
+    .footer a {
+      color: #007bff;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>💰 Maybank Budget Tracker</h1>
+    <p>Categorize transactions with ease</p>
+  </div>
+
+  <div class="content">
+    <div class="status-card">
+      <div class="status-row">
+        <span class="status-label">Extension Status</span>
+        <span class="status-value" id="status">Checking...</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Transactions Found</span>
+        <span class="status-value" id="count">0</span>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="dashboardBtn">Open Dashboard</button>
+    <p style="font-size:12px;color:#666;margin-top:8px;">Extension auto-runs on Maybank pages</p>
+
+    <div class="shortcuts">
+      <h3>Keyboard Shortcuts</h3>
+      <div class="shortcut-row">
+        <span>Navigate rows</span>
+        <span><span class="shortcut-key">↑</span> <span class="shortcut-key">↓</span></span>
+      </div>
+      <div class="shortcut-row">
+        <span>Switch fields</span>
+        <span><span class="shortcut-key">←</span> <span class="shortcut-key">→</span></span>
+      </div>
+      <div class="shortcut-row">
+        <span>Save & next</span>
+        <span><span class="shortcut-key">Enter</span></span>
+      </div>
+      <div class="shortcut-row">
+        <span>Deactivate</span>
+        <span><span class="shortcut-key">Esc</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="#" id="settingsLink">Settings</a> • 
+    <a href="#" id="helpLink">Help</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

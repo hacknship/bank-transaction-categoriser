@@ -1,0 +1,68 @@
+/* Maybank Budget Tracker Styles */
+
+.mbt-header {
+  background-color: #373737 !important;
+  color: white !important;
+  font-weight: 600 !important;
+  padding: 12px 8px !important;
+  text-align: left !important;
+  font-size: 12px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  border-bottom: none !important;
+  vertical-align: middle !important;
+}
+
+.mbt-cell {
+  padding: 8px !important;
+  vertical-align: middle !important;
+  background-color: transparent !important;
+}
+
+.mbt-select {
+  width: 100% !important;
+  min-width: 120px !important;
+  padding: 8px 10px !important;
+  border: 1px solid #ddd !important;
+  border-radius: 4px !important;
+  font-size: 13px !important;
+  background-color: white !important;
+  color: #333 !important;
+  cursor: pointer !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+}
+
+.mbt-select:focus {
+  outline: none !important;
+  border-color: #007bff !important;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25) !important;
+}
+
+.mbt-input {
+  width: 100% !important;
+  min-width: 150px !important;
+  padding: 8px 10px !important;
+  border: 1px solid #ddd !important;
+  border-radius: 4px !important;
+  font-size: 13px !important;
+  background-color: white !important;
+  color: #333 !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+}
+
+.mbt-input:focus {
+  outline: none !important;
+  border-color: #007bff !important;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25) !important;
+}
+
+/* Row styling */
+tr[data-mbt-id] {
+  transition: background-color 0.2s;
+}
+
+tr[data-mbt-id]:hover {
+  background-color: rgba(0, 123, 255, 0.05) !important;
+}

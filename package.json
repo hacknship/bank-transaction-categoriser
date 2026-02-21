@@ -1,0 +1,16 @@
+{
+  "name": "maybank-budget-tracker",
+  "version": "1.0.0",
+  "description": "Chrome extension + serverless web app for categorizing Maybank transactions",
+  "scripts": {
+    "dev": "cd web-app && npm run dev",
+    "build": "cd web-app && npm run build",
+    "netlify:dev": "netlify dev"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  }
+}

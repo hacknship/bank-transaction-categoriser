@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Maybank Budget Tracker",
+  "version": "1.0.0",
+  "description": "Categorize Maybank transactions with budget tracking",
+  "content_scripts": [
+    {
+      "matches": ["https://www.maybank2u.com.my/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
