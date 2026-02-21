@@ -339,7 +339,20 @@
               attempts++;
               if (waitForTableAndProcess() || attempts > 20) {
                 clearInterval(retryInterval);
+                // Reset to first row after successful load
+                setTimeout(function() {
+                  kbCurrentRow = 0;
+                  kbCurrentCol = 0;
+                  focusCell(0, 0, false);
+                }, 300);
               }
+            }, 300);
+          } else {
+            // Reset to first row immediately if table found
+            setTimeout(function() {
+              kbCurrentRow = 0;
+              kbCurrentCol = 0;
+              focusCell(0, 0, false);
             }, 300);
           }
         }, 500);
@@ -364,6 +377,12 @@
     
     if (isNext || isBack) {
       console.log('[MBT] Pagination clicked:', isNext ? 'NEXT' : 'BACK');
+      
+      // Clear highlight and reset position
+      clearHighlight();
+      kbCurrentRow = -1;
+      kbCurrentCol = 0;
+      
       // Clear and show skeleton immediately
       processedRows.clear();
       showSkeletonLoading();
@@ -379,6 +398,13 @@
         for (let i = 0; i < rowsWithId.length; i++) rowsWithId[i].removeAttribute('data-mbt-id');
         
         process();
+        
+        // Reset to first row after processing
+        setTimeout(function() {
+          kbCurrentRow = 0;
+          kbCurrentCol = 0;
+          focusCell(0, 0, false);
+        }, 200);
       }, 1500);
     }
   });
@@ -401,29 +427,59 @@
     return promise;
   };
 
-  // KEYBOARD NAVIGATION - Version 2
-  console.log('[MBT] Setting up keyboard navigation...');
+  // KEYBOARD NAVIGATION - Version 3 (Enhanced)
+  console.log('[MBT] Setting up enhanced keyboard navigation...');
   
-  let kbCurrentRow = 0;
-  let kbCurrentCol = 0; // 0 = Category, 1 = Notes
-
+  let kbCurrentRow = -1;
+  let kbCurrentCol = 0;
+  let isDropdownOpen = false;
+  
+  // Add highlight styles
+  const highlightStyle = document.createElement('style');
+  highlightStyle.textContent = `
+    .mbt-row-active { background-color: #e3f2fd !important; }
+    .mbt-cell-active { outline: 2px solid #2196f3 !important; outline-offset: -2px; }
+  `;
+  document.head.appendChild(highlightStyle);
+  
   function getMbtRows() {
     return document.querySelectorAll('tbody tr[data-mbt-id]');
   }
-
-  function focusCell(rowIdx, colIdx) {
-    console.log('[KB] focusCell called - row:', rowIdx, 'col:', colIdx);
+  
+  function clearHighlight() {
+    document.querySelectorAll('.mbt-row-active').forEach(el => el.classList.remove('mbt-row-active'));
+    document.querySelectorAll('.mbt-cell-active').forEach(el => el.classList.remove('mbt-cell-active'));
+  }
+  
+  function highlightRow(rowIdx) {
+    clearHighlight();
     const rows = getMbtRows();
-    console.log('[KB] Total rows found:', rows.length);
-    
-    if (rowIdx < 0 || rowIdx >= rows.length) {
-      console.log('[KB] Row index out of bounds');
-      return false;
+    if (rowIdx >= 0 && rowIdx < rows.length) {
+      rows[rowIdx].classList.add('mbt-row-active');
+      // Scroll into view
+      rows[rowIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+  }
+  
+  function highlightCell(rowIdx, colIdx) {
+    highlightRow(rowIdx);
+    const rows = getMbtRows();
+    if (rowIdx >= 0 && rowIdx < rows.length) {
+      const cells = rows[rowIdx].querySelectorAll('.mbt-cell');
+      if (cells[colIdx]) cells[colIdx].classList.add('mbt-cell-active');
+    }
+  }
+
+  function focusCell(rowIdx, colIdx, openDropdown) {
+    console.log('[KB] focusCell - row:', rowIdx, 'col:', colIdx, 'openDropdown:', openDropdown);
+    const rows = getMbtRows();
+    if (rowIdx < 0 || rowIdx >= rows.length) return false;
+    
+    kbCurrentRow = rowIdx;
+    kbCurrentCol = colIdx;
     
     const row = rows[rowIdx];
     const cells = row.querySelectorAll('.mbt-cell');
-    console.log('[KB] Cells in row:', cells.length);
     
     let target = null;
     if (colIdx === 0 && cells[0]) {
@@ -433,37 +489,34 @@
     }
     
     if (target) {
-      console.log('[KB] Focusing element:', target.tagName);
       target.focus();
-      if (target.select) target.select();
-      kbCurrentRow = rowIdx;
-      kbCurrentCol = colIdx;
+      highlightCell(rowIdx, colIdx);
+      
+      // Open dropdown if requested
+      if (openDropdown && colIdx === 0 && target.tagName === 'SELECT') {
+        target.click();
+        isDropdownOpen = true;
+      }
+      
       return true;
     }
-    console.log('[KB] No target element found');
     return false;
   }
 
   function saveCurrentRow(row) {
-    console.log('[KB] saveCurrentRow called');
+    console.log('[KB] saveCurrentRow');
     const txId = row.getAttribute('data-mbt-id');
     const select = row.querySelector('select');
     const input = row.querySelector('input[type="text"]');
     
-    if (!txId || !select || !input) {
-      console.log('[KB] Missing elements for save');
-      return;
-    }
+    if (!txId || !select || !input) return;
     
     const cells = row.querySelectorAll('td');
     const dateCell = cells[0];
     const descCell = cells[1];
     const amtCell = cells[3];
     
-    if (!dateCell || !descCell || !amtCell) {
-      console.log('[KB] Missing table cells');
-      return;
-    }
+    if (!dateCell || !descCell || !amtCell) return;
     
     const dateTxt = dateCell.textContent ? dateCell.textContent.trim() : '';
     const descTxt = descCell.textContent ? descCell.textContent.trim() : '';
@@ -478,62 +531,105 @@
         savedAt: new Date().toISOString()
       });
       
-      // Show checkmark
-      const cells = row.querySelectorAll('.mbt-cell');
-      const statusCell = cells[2];
+      const mbtCells = row.querySelectorAll('.mbt-cell');
+      const statusCell = mbtCells[2];
       if (statusCell && select.value) {
         statusCell.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
       }
     }
   }
+  
+  // Reset to first row (call when page changes)
+  window.MBT.resetToFirstRow = function() {
+    kbCurrentRow = 0;
+    kbCurrentCol = 0;
+    const rows = getMbtRows();
+    if (rows.length > 0) {
+      // Scroll to table first
+      const table = document.querySelector('table[class*="AccountTable"]');
+      if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Then focus first cell
+      setTimeout(() => focusCell(0, 0, false), 300);
+    }
+  };
 
   document.addEventListener('keydown', function(e) {
-    console.log('[KB] Key pressed:', e.key, 'Shift:', e.shiftKey, 'Meta:', e.metaKey, 'Ctrl:', e.ctrlKey);
+    console.log('[KB] Key:', e.key, 'Shift:', e.shiftKey, 'Meta:', e.metaKey);
     
-    // PAGINATION SHORTCUTS: Cmd/Ctrl + , (prev) or . (next)
+    // PAGINATION: Cmd/Ctrl + , or .
     if ((e.metaKey || e.ctrlKey) && (e.key === ',' || e.key === '.')) {
       e.preventDefault();
-      console.log('[KB] Pagination shortcut detected');
-      
+      clearHighlight();
       if (e.key === ',') {
-        // Previous page
-        const prevBtn = document.querySelector('.SavingAccountContainer---back_arrow---FqLBL, [class*="back_arrow"], [class*="prev_arrow"]');
-        if (prevBtn) {
-          console.log('[KB] Clicking previous button');
-          prevBtn.click();
-        } else {
-          console.log('[KB] Previous button not found');
-        }
+        const prevBtn = document.querySelector('.SavingAccountContainer---back_arrow---FqLBL, [class*="back_arrow"]');
+        if (prevBtn) prevBtn.click();
       } else {
-        // Next page
         const nextBtn = document.querySelector('.SavingAccountContainer---next_arrow---jbdUO, [class*="next_arrow"]');
-        if (nextBtn) {
-          console.log('[KB] Clicking next button');
-          nextBtn.click();
-        } else {
-          console.log('[KB] Next button not found');
-        }
+        if (nextBtn) nextBtn.click();
       }
       return;
     }
     
     const rows = getMbtRows();
-    console.log('[KB] Total rows:', rows.length);
     if (rows.length === 0) return;
-
-    const active = document.activeElement;
-    console.log('[KB] Active element:', active ? active.tagName : 'none');
     
+    const active = document.activeElement;
     const isSelect = active && active.tagName === 'SELECT';
     const isInput = active && active.tagName === 'INPUT';
     const isInMbt = active && active.closest && active.closest('.mbt-cell');
     
-    // SHIFT + UP/DOWN: Navigate between rows
-    if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    // If dropdown is open, Enter selects option
+    if (isDropdownOpen && isSelect && e.key === 'Enter') {
       e.preventDefault();
-      console.log('[KB] Shift+Arrow detected');
+      isDropdownOpen = false;
+      const row = active.closest('tr[data-mbt-id]');
+      if (row) saveCurrentRow(row);
+      // Move to Notes (same row)
+      kbCurrentCol = 1;
+      focusCell(kbCurrentRow, kbCurrentCol, false);
+      return;
+    }
+    
+    // If no cell is active and arrow pressed, start at first row
+    if (!isInMbt && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      console.log('[KB] Starting navigation from first row');
+      // Scroll to table
+      const table = document.querySelector('table[class*="AccountTable"]');
+      if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      kbCurrentRow = 0;
+      kbCurrentCol = 0;
+      focusCell(0, 0, false);
+      return;
+    }
+    
+    // ENTER on Category: Open dropdown
+    if (e.key === 'Enter' && isSelect && !isDropdownOpen) {
+      e.preventDefault();
+      console.log('[KB] Opening dropdown');
+      isDropdownOpen = true;
+      active.click();
+      return;
+    }
+    
+    // ENTER on Notes: Save and move to next row Category
+    if (e.key === 'Enter' && isInput) {
+      e.preventDefault();
+      console.log('[KB] Enter on Notes - save and next row');
+      const row = active.closest('tr[data-mbt-id]');
+      if (row) saveCurrentRow(row);
+      kbCurrentRow = Math.min(kbCurrentRow + 1, rows.length - 1);
+      kbCurrentCol = 0;
+      focusCell(kbCurrentRow, kbCurrentCol, false);
+      return;
+    }
+    
+    // ARROW NAVIGATION (when not in dropdown)
+    if (!isDropdownOpen && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault();
+      console.log('[KB] Arrow navigation:', e.key);
       
-      // Update current position from focused element
+      // Update position from active element
       if (isInMbt) {
         const row = active.closest('tr[data-mbt-id]');
         if (row) {
@@ -545,78 +641,134 @@
         if (cell) {
           const rowCells = row.querySelectorAll('.mbt-cell');
           for (let i = 0; i < rowCells.length; i++) {
-            if (rowCells[i] === cell) kbCurrentCol = (i === 0) ? 0 : 1;
+            if (rowCells[i] === cell) kbCurrentCol = i < 2 ? i : kbCurrentCol;
           }
         }
       }
       
-      if (e.key === 'ArrowDown') {
-        kbCurrentRow = Math.min(kbCurrentRow + 1, rows.length - 1);
-      } else {
-        kbCurrentRow = Math.max(kbCurrentRow - 1, 0);
-      }
-      
-      focusCell(kbCurrentRow, kbCurrentCol);
-      return;
-    }
-    
-    // ENTER: Save and move to next field
-    if (e.key === 'Enter' && (isSelect || isInput)) {
-      console.log('[KB] Enter pressed on', isSelect ? 'SELECT' : 'INPUT');
-      
-      const row = active.closest('tr[data-mbt-id]');
-      if (!row) {
-        console.log('[KB] No parent row found');
-        return;
-      }
-      
-      // Update position
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i] === row) kbCurrentRow = i;
-      }
-      kbCurrentCol = isSelect ? 0 : 1;
-      
-      // Save current row
-      saveCurrentRow(row);
-      
-      if (isSelect) {
-        // In Category → move to Notes (same row)
-        console.log('[KB] Moving to Notes (same row)');
-        e.preventDefault();
-        kbCurrentCol = 1;
-        focusCell(kbCurrentRow, kbCurrentCol);
-      } else {
-        // In Notes → move to Category (next row)
-        console.log('[KB] Moving to Category (next row)');
-        e.preventDefault();
-        kbCurrentRow = Math.min(kbCurrentRow + 1, rows.length - 1);
-        kbCurrentCol = 0;
-        focusCell(kbCurrentRow, kbCurrentCol);
-      }
-      return;
-    }
-    
-    // REGULAR ARROWS (without Shift): Only when NOT in dropdown
-    if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        // Only handle if in mbt cell
-        if (!isInMbt) return;
-        
-        e.preventDefault();
-        console.log('[KB] Arrow Left/Right');
-        
-        if (e.key === 'ArrowRight') {
+      switch (e.key) {
+        case 'ArrowDown':
+          kbCurrentRow = Math.min(kbCurrentRow + 1, rows.length - 1);
+          break;
+        case 'ArrowUp':
+          kbCurrentRow = Math.max(kbCurrentRow - 1, 0);
+          break;
+        case 'ArrowRight':
           kbCurrentCol = Math.min(kbCurrentCol + 1, 1);
-        } else {
+          break;
+        case 'ArrowLeft':
           kbCurrentCol = Math.max(kbCurrentCol - 1, 0);
+          break;
+      }
+      
+      focusCell(kbCurrentRow, kbCurrentCol, false);
+      return;
+    }
+  });
+  
+  // Track dropdown state
+  document.addEventListener('click', function(e) {
+    if (e.target.tagName === 'SELECT') {
+      isDropdownOpen = true;
+    } else {
+      isDropdownOpen = false;
+    }
+  });
+  
+  // Track focus
+  document.addEventListener('focusin', function(e) {
+    const target = e.target;
+    if (target.tagName === 'SELECT' || target.tagName === 'INPUT') {
+      const row = target.closest && target.closest('tr[data-mbt-id]');
+      if (row) {
+        const rows = getMbtRows();
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i] === row) {
+            kbCurrentRow = i;
+            break;
+          }
         }
-        
-        focusCell(kbCurrentRow, kbCurrentCol);
+        const cell = target.closest('.mbt-cell');
+        if (cell) {
+          const rowCells = row.querySelectorAll('.mbt-cell');
+          for (let i = 0; i < rowCells.length; i++) {
+            if (rowCells[i] === cell) {
+              kbCurrentCol = i < 2 ? i : kbCurrentCol;
+              break;
+            }
+          }
+        }
+        highlightCell(kbCurrentRow, kbCurrentCol);
       }
     }
   });
 
   console.log('[MBT] Keyboard navigation setup complete');
+  
+  // HELP PANEL
+  function createHelpPanel() {
+    const panel = document.createElement('div');
+    panel.id = 'mbt-help-panel';
+    panel.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 15px 20px;
+      border-radius: 8px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
+      z-index: 10000;
+      max-width: 320px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    
+    panel.innerHTML = `
+      <div style="font-weight: bold; margin-bottom: 10px; color: #ffc83d; font-size: 14px;">
+        ⌨️ Keyboard Shortcuts
+      </div>
+      <div style="margin-bottom: 6px;"><span style="color: #90caf9;">↑ ↓ ← →</span> Navigate fields</div>
+      <div style="margin-bottom: 6px;"><span style="color: #90caf9;">Enter</span> Open dropdown / Select & next</div>
+      <div style="margin-bottom: 6px;"><span style="color: #90caf9;">⌘,</span> Previous page</div>
+      <div style="margin-bottom: 6px;"><span style="color: #90caf9;">⌘.</span> Next page</div>
+      <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; font-size: 11px; color: #aaa;">
+        Press any arrow key to start
+      </div>
+    `;
+    
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    closeBtn.style.cssText = `
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: #aaa;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+    `;
+    closeBtn.onclick = function() {
+      panel.style.display = 'none';
+      localStorage.setItem('mbt_help_closed', 'true');
+    };
+    panel.appendChild(closeBtn);
+    
+    // Don't show if user closed it before
+    if (localStorage.getItem('mbt_help_closed') !== 'true') {
+      document.body.appendChild(panel);
+    }
+  }
+  
+  // Create help panel after a delay
+  setTimeout(createHelpPanel, 3000);
 
   window.MBT = {
     reprocess: resetAndProcess,
