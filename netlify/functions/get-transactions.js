@@ -12,7 +12,7 @@ exports.handler = async (event) => {
   }
 
   const client = new Client({
-    connectionString: process.env.GHOST_DB_URL,
+    connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
 
@@ -22,7 +22,10 @@ exports.handler = async (event) => {
     const params = event.queryStringParameters || {};
     const { accountId, startDate, endDate, category, uncategorized } = params;
 
-    let query = 'SELECT * FROM transactions WHERE 1=1';
+    let query = `
+      SELECT * FROM transactions
+      WHERE 1=1
+    `;
     const queryParams = [];
     let paramIndex = 1;
 

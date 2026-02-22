@@ -1,15 +1,36 @@
-// Maybank Budget Tracker - Content Script (Fixed v5)
+// Maybank Budget Tracker - Content Script (Ghost Cloud ONLY)
 (function() {
   'use strict';
 
   if (!window.location.href.includes('maybank2u.com.my')) return;
-  console.log('[MBT] Extension loaded v5');
+  console.log('[MBT] Extension loaded - Ghost Cloud Version');
 
-  const CATEGORIES = ['Food', 'Transport', 'Dining', 'Shopping', 'Medical', 'Entertainment', 'Utilities', 'Groceries', 'Others'];
+  // Ghost Database API
+  const API_BASE = 'https://maybank-categoriser.netlify.app/.netlify/functions';
+  
+  let categoriesCache = null;
   let processedRows = new Set();
   let kbRow = -1;
   let kbCol = 0;
   let dropdownOpen = false;
+
+  // Fetch categories from Ghost DB
+  async function fetchCategories() {
+    if (categoriesCache) return categoriesCache;
+    
+    try {
+      const res = await fetch(`${API_BASE}/get-categories`);
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      categoriesCache = (data.categories || []).map(c => c.name);
+      console.log('[MBT] Loaded categories:', categoriesCache);
+      return categoriesCache;
+    } catch (e) {
+      console.error('[MBT] Failed to fetch categories:', e);
+      // Return empty array - no defaults
+      return [];
+    }
+  }
 
   function simpleHash(str) {
     let hash = 0;
@@ -21,10 +42,11 @@
     return Math.abs(hash).toString(16).padStart(8, '0');
   }
 
-  function parseAmount(txt) {
+  function parseAmount(txt, isNegative) {
     if (!txt) return 0;
     const clean = txt.replace(/RM/g, '').replace(/,/g, '').replace(/-/g, '').trim();
-    return parseFloat(clean) || 0;
+    const amount = parseFloat(clean) || 0;
+    return isNegative ? -amount : amount;
   }
 
   function parseDate(txt) {
@@ -39,22 +61,41 @@
     return null;
   }
 
-  function saveTx(txId, data) {
+  // Save transaction to Ghost DB ONLY
+  async function saveTx(txId, data) {
     try {
-      localStorage.setItem('mbt_' + txId, JSON.stringify(data));
-    } catch (e) {}
-  }
-
-  function loadTx(txId) {
-    try {
-      const item = localStorage.getItem('mbt_' + txId);
-      return item ? JSON.parse(item) : null;
+      const res = await fetch(`${API_BASE}/save-transaction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transactionId: data.txId,
+          accountId: data.accountId,
+          txDate: data.date,
+          description: data.description,
+          amount: data.amount,
+          category: data.category,
+          notes: data.notes
+        })
+      });
+      
+      if (res.ok) {
+        console.log('[MBT] Saved to Ghost DB:', txId);
+        return true;
+      } else {
+        console.error('[MBT] Failed to save:', res.status);
+        return false;
+      }
     } catch (e) {
-      return null;
+      console.error('[MBT] Network error saving:', e);
+      return false;
     }
   }
 
-  // Skeleton loading
+  // NO localStorage - empty function
+  function loadTx(txId) {
+    return null; // Always return null - fetch from cloud instead
+  }
+
   function showSkeleton() {
     const tbody = document.querySelector('table[class*="AccountTable"] tbody');
     if (!tbody) return;
@@ -89,7 +130,6 @@
     document.querySelectorAll('.mbt-skeleton').forEach(function(el) { el.remove(); });
   }
 
-  // Highlight styles
   const hl = document.createElement('style');
   hl.textContent = '.mbt-row-active{background-color:#e3f2fd!important}.mbt-row-active td{background-color:#e3f2fd!important}.mbt-cell-active select,.mbt-cell-active input{border:2px solid #2196f3!important;box-shadow:0 0 0 1px #2196f3!important}';
   document.head.appendChild(hl);
@@ -124,7 +164,45 @@
     return false;
   }
 
-  function saveRow(row) {
+  function extractAccountInfo() {
+    const accountContainer = document.querySelector('.SavingAccountContainer---accountName---1Z4m8') || 
+                             document.querySelector('[class*="SavingAccountContainer---accountName"]') ||
+                             document.querySelector('[class*="accountName"]');
+    
+    if (!accountContainer) return null;
+    
+    const spans = accountContainer.querySelectorAll('span');
+    let accountName = '';
+    let accountType = '';
+    let accountNumber = '';
+    
+    spans.forEach(span => {
+      const text = span.textContent.trim();
+      const className = span.className || '';
+      
+      if (className.includes('number')) {
+        accountNumber = text.replace(/[^0-9]/g, '');
+      } else if (text.startsWith('(') && text.endsWith(')')) {
+        accountType = text.slice(1, -1);
+      } else if (text && !className.includes('number')) {
+        accountName = text;
+      }
+    });
+    
+    if (!accountNumber) {
+      const fullText = accountContainer.textContent;
+      const numMatch = fullText.match(/(\d{10,})/);
+      if (numMatch) accountNumber = numMatch[1];
+    }
+    
+    return {
+      accountId: accountNumber || 'unknown',
+      accountName: (accountName + ' ' + accountType).trim() || 'Unknown Account',
+      accountNumber: accountNumber || 'unknown'
+    };
+  }
+
+  async function saveRow(row) {
     const txId = row.getAttribute('data-mbt-id');
     const sel = row.querySelector('select');
     const inp = row.querySelector('input[type="text"]');
@@ -134,19 +212,34 @@
     const date = parseDate(cells[0] && cells[0].textContent ? cells[0].textContent.trim() : '');
     if (!date) return;
     
-    saveTx(txId, {
+    const accountInfo = extractAccountInfo();
+    
+    const amtCell = cells[3];
+    const isNeg = amtCell && amtCell.querySelector('.SavingAccountContainer---negativeAmount---2fwWg') ? true : false;
+    
+    const data = {
       txId: txId, date: date,
       description: cells[1] && cells[1].textContent ? cells[1].textContent.trim() : '',
-      amount: parseAmount(cells[3] && cells[3].textContent ? cells[3].textContent.trim() : ''),
+      amount: parseAmount(amtCell && amtCell.textContent ? amtCell.textContent.trim() : '', isNeg),
       category: sel.value, notes: inp.value,
+      accountId: accountInfo ? accountInfo.accountId : null,
+      accountName: accountInfo ? accountInfo.accountName : null,
       savedAt: new Date().toISOString()
-    });
+    };
+    
+    const success = await saveTx(txId, data);
     
     const st = row.querySelectorAll('.mbt-cell')[2];
-    if (st && sel.value) st.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
+    if (st) {
+      if (success) {
+        st.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
+      } else {
+        st.innerHTML = '<span style="color:#ff5555;font-weight:bold;">✗</span>';
+      }
+    }
   }
 
-  function processRow(row, idx) {
+  async function processRow(row, idx) {
     const cells = row.querySelectorAll('td');
     if (cells.length < 4) return;
 
@@ -170,19 +263,22 @@
     row.setAttribute('data-mbt-id', txId);
     row.querySelectorAll('.mbt-cell').forEach(function(el) { el.remove(); });
 
-    const saved = loadTx(txId);
+    const CATEGORIES = await fetchCategories();
 
-    // Category
     const cat = document.createElement('td');
     cat.className = 'mbt-cell';
     cat.style.cssText = 'padding:8px;';
     const sel = document.createElement('select');
     sel.style.cssText = 'width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;background:white;';
-    sel.innerHTML = '<option value="">-- Select --</option>' + 
-      CATEGORIES.map(function(c) { return '<option value="' + c + '"' + (c === (saved && saved.category) ? ' selected' : '') + '>' + c + '</option>'; }).join('');
+    
+    if (CATEGORIES.length === 0) {
+      sel.innerHTML = '<option value="">No categories - check API</option>';
+    } else {
+      sel.innerHTML = '<option value="">-- Select --</option>' + 
+        CATEGORIES.map(function(c) { return '<option value="' + c + '">' + c + '</option>'; }).join('');
+    }
     cat.appendChild(sel);
 
-    // Notes
     const note = document.createElement('td');
     note.className = 'mbt-cell';
     note.style.cssText = 'padding:8px;';
@@ -190,14 +286,11 @@
     inp.type = 'text';
     inp.style.cssText = 'width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;';
     inp.placeholder = 'Notes...';
-    inp.value = (saved && saved.notes) || '';
     note.appendChild(inp);
 
-    // Status
     const status = document.createElement('td');
     status.className = 'mbt-cell';
     status.style.cssText = 'padding:8px;text-align:center;';
-    if (saved && saved.category) status.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
 
     row.appendChild(cat);
     row.appendChild(note);
@@ -219,7 +312,7 @@
 
     const thead = table.querySelector('thead tr');
     if (thead && !thead.querySelector('.mbt-header')) {
-      ['CATEGORY','NOTES','✓'].forEach(function(t,i) {
+      ['CATEGORY','NOTES',''].forEach(function(t,i) {
         const th = document.createElement('th');
         th.className = 'mbt-header';
         th.textContent = t;
@@ -231,13 +324,10 @@
 
     const rows = tbody.querySelectorAll('tr');
     console.log('[MBT] Found', rows.length, 'rows');
-    for (let i = 0; i < rows.length; i++) processRow(rows[i], i);
-    console.log('[MBT] Done');
     
-    // Show help panel only when table detected
-    if (rows.length > 0 && !document.getElementById('mbt-help-panel')) {
-      setTimeout(createHelpPanel, 2000);
-    }
+    Promise.all(Array.from(rows).map((row, i) => processRow(row, i))).then(() => {
+      console.log('[MBT] Done processing');
+    });
   }
 
   function resetAndProcess() {
@@ -247,6 +337,7 @@
     document.querySelectorAll('.mbt-cell').forEach(function(el) { el.remove(); });
     document.querySelectorAll('.mbt-header').forEach(function(el) { el.remove(); });
     document.querySelectorAll('tr[data-mbt-id]').forEach(function(el) { el.removeAttribute('data-mbt-id'); });
+    categoriesCache = null;
     showSkeleton();
     setTimeout(function() {
       removeSkeleton();
@@ -255,7 +346,6 @@
     }, 1500);
   }
 
-  // Multiple attempts to process on initial load
   function tryProcess(attempt) {
     attempt = attempt || 1;
     console.log('[MBT] Try process attempt', attempt);
@@ -272,18 +362,15 @@
     return false;
   }
 
-  // Start processing
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() { tryProcess(1); });
   } else {
     tryProcess(1);
   }
 
-  // Fallbacks
   setTimeout(function() { if (processedRows.size === 0) tryProcess(99); }, 3000);
   setTimeout(function() { if (processedRows.size === 0) tryProcess(999); }, 6000);
 
-  // URL change detection
   let lastUrl = location.href;
   setInterval(function() {
     if (location.href !== lastUrl) {
@@ -292,6 +379,7 @@
         processedRows.clear();
         kbRow = -1; kbCol = 0;
         clearHL();
+        categoriesCache = null;
         setTimeout(function() {
           document.querySelectorAll('.mbt-cell,.mbt-header').forEach(function(el) { el.remove(); });
           document.querySelectorAll('tr[data-mbt-id]').forEach(function(el) { el.removeAttribute('data-mbt-id'); });
@@ -302,7 +390,6 @@
     }
   }, 200);
 
-  // Pagination clicks
   document.addEventListener('click', function(e) {
     const t = e.target;
     const isNext = t.closest && (t.closest('.SavingAccountContainer---next_arrow---jbdUO') || t.closest('[class*="next_arrow"]'));
@@ -310,7 +397,6 @@
     if (isNext || isBack) resetAndProcess();
   });
 
-  // Fetch detection
   const origFetch = window.fetch;
   window.fetch = function() {
     const url = arguments[0];
@@ -320,12 +406,10 @@
     return promise;
   };
 
-  // KEYBOARD
   document.addEventListener('keydown', function(e) {
     const rows = document.querySelectorAll('tbody tr[data-mbt-id]');
     if (rows.length === 0) return;
 
-    // Pagination
     if ((e.metaKey || e.ctrlKey) && (e.key === ',' || e.key === '.')) {
       e.preventDefault();
       clearHL();
@@ -345,7 +429,6 @@
     const isInput = active && active.tagName === 'INPUT';
     const isInMbt = active && active.closest && active.closest('.mbt-cell');
 
-    // Start navigation
     if (!isInMbt && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.key) !== -1) {
       e.preventDefault();
       const table = document.querySelector('table[class*="AccountTable"]');
@@ -357,22 +440,18 @@
 
     if (!isInMbt) return;
 
-    // ENTER handling
     if (e.key === 'Enter') {
       const row = active.closest('tr[data-mbt-id]');
       if (!row) return;
 
       if (isSelect) {
         if (!dropdownOpen) {
-          // First Enter - open dropdown
           e.preventDefault();
           dropdownOpen = true;
           active.click();
-          // Update size to show options
           active.size = Math.min(active.options.length, 5);
           return;
         } else {
-          // Second Enter - dropdown is open, select and move
           e.preventDefault();
           dropdownOpen = false;
           active.size = 1;
@@ -392,14 +471,12 @@
       }
     }
 
-    // ESC to close dropdown
     if (e.key === 'Escape' && isSelect && dropdownOpen) {
       dropdownOpen = false;
       active.size = 1;
       return;
     }
 
-    // Arrows - only if dropdown not open
     if (dropdownOpen && isSelect) return;
 
     if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.key) !== -1) {
@@ -443,57 +520,6 @@
     }
   });
 
-  // HELP PANEL - Only show when table exists
-  function createHelpPanel() {
-    if (document.getElementById('mbt-help-panel')) return;
-    
-    // Only create if table exists
-    const table = document.querySelector('table[class*="AccountTable"]');
-    if (!table) return;
-    
-    if (localStorage.getItem('mbt_help_closed') === 'true') return;
-    
-    const panel = document.createElement('div');
-    panel.id = 'mbt-help-panel';
-    panel.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(0,0,0,0.85);color:white;padding:15px 20px;border-radius:8px;font-family:system-ui,-apple-system,sans-serif;font-size:13px;line-height:1.6;z-index:10000;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-    
-    panel.innerHTML = '<div style="font-weight:bold;margin-bottom:10px;color:#ffc83d;font-size:14px;">⌨️ Keyboard Shortcuts</div>' +
-      '<div style="margin-bottom:6px;"><span style="color:#90caf9;">↑↓←→</span> Navigate cells</div>' +
-      '<div style="margin-bottom:6px;"><span style="color:#90caf9;">Enter</span> Open dropdown / Select & next</div>' +
-      '<div style="margin-bottom:6px;"><span style="color:#90caf9;">⌘,</span> Previous page</div>' +
-      '<div style="margin-bottom:6px;"><span style="color:#90caf9;">⌘.</span> Next page</div>' +
-      '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #444;font-size:11px;color:#aaa;">Press any arrow key to start</div>';
-    
-    const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '×';
-    closeBtn.style.cssText = 'position:absolute;top:8px;right:10px;background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;padding:0;width:24px;height:24px;line-height:24px;';
-    closeBtn.onclick = function() {
-      panel.style.display = 'none';
-      localStorage.setItem('mbt_help_closed', 'true');
-    };
-    panel.appendChild(closeBtn);
-    
-    document.body.appendChild(panel);
-  }
-
-  window.MBT = {
-    reprocess: resetAndProcess,
-    process: process,
-    focusCell: focusCell,
-    listSaved: function() {
-      const saved = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('mbt_')) {
-          try {
-            const d = JSON.parse(localStorage.getItem(key));
-            saved.push({ id: key.replace('mbt_', ''), category: d.category, notes: d.notes });
-          } catch (e) {}
-        }
-      }
-      console.log('[MBT] Saved:', saved);
-      return saved;
-    }
-  };
+  console.log('[MBT] Ghost Cloud extension loaded.');
 
 })();

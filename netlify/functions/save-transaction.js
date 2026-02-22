@@ -16,7 +16,7 @@ exports.handler = async (event) => {
   }
 
   const client = new Client({
-    connectionString: process.env.GHOST_DB_URL,
+    connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
 
@@ -26,11 +26,14 @@ exports.handler = async (event) => {
     const { transactionId, accountId, txDate, description, amount, category, notes } = JSON.parse(event.body);
 
     const result = await client.query(`
-      INSERT INTO transactions
-      (transaction_id, account_id, tx_date, description, amount, category, notes, categorized_at)
+      INSERT INTO transactions (tx_id, account_id, tx_date, description, amount, category, notes, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-      ON CONFLICT (transaction_id)
+      ON CONFLICT (tx_id)
       DO UPDATE SET 
+        account_id = EXCLUDED.account_id,
+        tx_date = EXCLUDED.tx_date,
+        description = EXCLUDED.description,
+        amount = EXCLUDED.amount,
         category = EXCLUDED.category,
         notes = EXCLUDED.notes,
         updated_at = NOW()

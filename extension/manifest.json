@@ -3,9 +3,13 @@
   "name": "Maybank Budget Tracker",
   "version": "1.0.0",
   "description": "Categorize Maybank transactions with budget tracking",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://www.maybank2u.com.my/*"],
+      "matches": ["https://www.maybank2u.com.my/*", "https://*.maybank2u.com.my/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
@@ -13,5 +17,11 @@
   ],
   "action": {
     "default_popup": "popup.html"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["data-viewer.html", "data-viewer.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

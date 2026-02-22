@@ -3,32 +3,54 @@
 document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const countEl = document.getElementById('count');
-  const dashboardBtn = document.getElementById('dashboardBtn');
+  const viewDataBtn = document.getElementById('viewDataBtn');
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const url = tabs[0]?.url || '';
-    const isMaybank = url.includes('maybank2u.com.my');
+    // More flexible URL detection - check for maybank in various forms
+    const isMaybank = /maybank/i.test(url) || url.includes('maybank2u');
     
     if (!isMaybank) {
       statusEl.textContent = 'Not on Maybank';
       statusEl.className = 'status-value inactive';
-      countEl.textContent = '0';
-      return;
+    } else {
+      statusEl.textContent = 'Active';
+      statusEl.className = 'status-value active';
     }
-
-    statusEl.textContent = 'On Maybank';
-    statusEl.className = 'status-value active';
-
-    chrome.tabs.sendMessage(tabs[0].id, { action: 'getStatus' }, (res) => {
-      if (chrome.runtime.lastError) {
-        countEl.textContent = '0';
-        return;
+  });
+  
+  // Get count from chrome.storage.local (shared across extension)
+  chrome.storage.local.get(null, (result) => {
+    const txIds = new Set();
+    for (const [key, value] of Object.entries(result)) {
+      if (key.startsWith('mbt_') && value && value.txId) {
+        txIds.add(value.txId);
       }
-      countEl.textContent = res?.count || 0;
-    });
+    }
+    countEl.textContent = txIds.size;
+  });
+  
+  // Listen for changes and update count in real-time
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local') {
+      const hasMbtChanges = Object.keys(changes).some(key => key.startsWith('mbt_'));
+      if (hasMbtChanges) {
+        chrome.storage.local.get(null, (result) => {
+          const txIds = new Set();
+          for (const [key, value] of Object.entries(result)) {
+            if (key.startsWith('mbt_') && value && value.txId) {
+              txIds.add(value.txId);
+            }
+          }
+          countEl.textContent = txIds.size;
+        });
+      }
+    }
   });
 
-  dashboardBtn.addEventListener('click', () => {
-    chrome.tabs.create({ url: 'https://your-netlify-site.netlify.app' });
-  });
+  if (viewDataBtn) {
+    viewDataBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('data-viewer.html') });
+    });
+  }
 });

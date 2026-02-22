@@ -17,29 +17,16 @@ async function fetchAPI(endpoint, options = {}) {
 }
 
 export const API = {
-  // Accounts
-  detectAccount: (data) => fetchAPI('/detect-account', { method: 'POST', body: JSON.stringify(data) }),
+  // Categories
+  getCategories: () => fetchAPI('/get-categories'),
   
   // Transactions
-  saveTransaction: (data) => fetchAPI('/save-transaction', { method: 'POST', body: JSON.stringify(data) }),
   getTransactions: (params = {}) => {
     const query = new URLSearchParams(params).toString();
     return fetchAPI(`/get-transactions?${query}`);
   },
-  
-  // Budget
-  setBudget: (data) => fetchAPI('/set-budget', { method: 'POST', body: JSON.stringify(data) }),
-  getBudget: (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    return fetchAPI(`/get-budget?${query}`);
-  },
-  
-  // Reconciliation
-  getReconcile: (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    return fetchAPI(`/get-reconcile?${query}`);
-  },
-  
-  // Archive
-  archiveBudget: (data) => fetchAPI('/archive-budget', { method: 'POST', body: JSON.stringify(data) }),
+  saveTransaction: (data) => fetchAPI('/save-transaction', { 
+    method: 'POST', 
+    body: JSON.stringify(data) 
+  }),
 };
