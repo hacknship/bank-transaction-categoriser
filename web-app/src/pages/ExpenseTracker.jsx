@@ -1,10 +1,17 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useBudget, useAvailablePeriods, useUpdateSnapshotBudget } from '../hooks/useBudget';
+import API from '../utils/api';
 
 function ExpenseTracker() {
   const [period, setPeriod] = useState('');
   const [editingCategory, setEditingCategory] = useState(null);
   const [editAmount, setEditAmount] = useState('');
+  
+  // Modal state for transactions
+  const [showTransactionsModal, setShowTransactionsModal] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [categoryTransactions, setCategoryTransactions] = useState([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
 
   // Initialize with current month
   useEffect(() => {
@@ -61,6 +68,60 @@ function ExpenseTracker() {
   const isPastMonth = () => {
     const today = new Date().toISOString().slice(0, 7);
     return period < today;
+  };
+
+  // Fetch transactions for a category
+  async function fetchCategoryTransactions(categoryName) {
+    setLoadingTransactions(true);
+    try {
+      // Calculate date range based on period
+      let startDate, endDate;
+      if (period.length === 4) {
+        // Year period
+        startDate = `${period}-01-01`;
+        endDate = `${period}-12-31`;
+      } else {
+        // Month period
+        const [year, month] = period.split('-');
+        startDate = `${year}-${month}-01`;
+        const lastDay = new Date(year, month, 0).getDate();
+        endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+      }
+      
+      const data = await API.getTransactions({ 
+        category: categoryName, 
+        limit: '1000',
+        startDate,
+        endDate
+      });
+      setCategoryTransactions(data.transactions || []);
+    } catch (error) {
+      console.error('Failed to fetch transactions:', error);
+    } finally {
+      setLoadingTransactions(false);
+    }
+  }
+
+  // Handle card click to show transactions
+  function handleCardClick(category) {
+    setSelectedCategory(category);
+    setShowTransactionsModal(true);
+    fetchCategoryTransactions(category.category_name);
+  }
+
+  // Close modal
+  function handleCloseModal() {
+    setShowTransactionsModal(false);
+    setSelectedCategory(null);
+    setCategoryTransactions([]);
+  }
+
+  // Calculate total spent for modal
+  const calculateTotalSpent = () => {
+    return categoryTransactions.reduce((sum, t) => {
+      const amount = parseFloat(t.amount || 0);
+      return sum + (amount < 0 ? Math.abs(amount) : 0);
+    }, 0);
   };
 
   // Group budgets by period type
@@ -192,12 +253,16 @@ function ExpenseTracker() {
             return (
               <div 
                 key={category.category_id}
+                onClick={() => handleCardClick(category)}
                 style={{
                   background: '#fff',
                   border: '4px solid #000',
                   boxShadow: '6px 6px 0 #000',
                   padding: '20px',
-                  position: 'relative'
+                  position: 'relative',
+                  cursor: 'pointer',
+                  transition: 'transform 0.2s ease',
+                  ':hover': { transform: 'translate(-2px, -2px)' }
                 }}
               >
                 {/* Header */}
@@ -306,7 +371,10 @@ function ExpenseTracker() {
                     ) : (
                       <button 
                         className="btn-small"
-                        onClick={() => handleEditClick(category)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditClick(category);
+                        }}
                         style={{ width: '100%' }}
                       >
                         ✏️ Edit Budget
@@ -414,6 +482,183 @@ function ExpenseTracker() {
           </>
         )}
       </div>
+
+      {/* Transactions Modal */}
+      {showTransactionsModal && selectedCategory && (
+        <div 
+          onClick={handleCloseModal}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '20px'
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              border: '4px solid #000',
+              boxShadow: '8px 8px 0 #000',
+              maxWidth: '800px',
+              width: '100%',
+              maxHeight: '80vh',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{
+              background: '#FFD600',
+              borderBottom: '4px solid #000',
+              padding: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px'
+            }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                background: '#fff',
+                border: '3px solid #000',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '24px'
+              }}>
+                {selectedCategory.category_icon || '📦'}
+              </div>
+              <div style={{ flex: 1 }}>
+                <h2 style={{ 
+                  margin: 0,
+                  fontSize: '20px',
+                  fontWeight: 700,
+                  textTransform: 'uppercase'
+                }}>
+                  {selectedCategory.category_name}
+                </h2>
+                <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#333' }}>
+                  Transactions for {period}
+                </p>
+              </div>
+              <button 
+                onClick={handleCloseModal}
+                style={{
+                  background: '#000',
+                  color: '#fff',
+                  border: 'none',
+                  width: '40px',
+                  height: '40px',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div style={{ 
+              flex: 1, 
+              overflow: 'auto',
+              padding: '20px'
+            }}>
+              {loadingTransactions ? (
+                <div style={{ textAlign: 'center', padding: '40px' }}>
+                  <p>Loading transactions...</p>
+                </div>
+              ) : categoryTransactions.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px' }}>
+                  <p>No transactions found for this category.</p>
+                </div>
+              ) : (
+                <table style={{ 
+                  width: '100%', 
+                  borderCollapse: 'collapse',
+                  fontSize: '14px'
+                }}>
+                  <thead>
+                    <tr style={{ 
+                      borderBottom: '3px solid #000',
+                      textAlign: 'left'
+                    }}>
+                      <th style={{ padding: '12px 8px' }}>Date</th>
+                      <th style={{ padding: '12px 8px' }}>Description</th>
+                      <th style={{ padding: '12px 8px', textAlign: 'right' }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categoryTransactions
+                      .sort((a, b) => new Date(b.date) - new Date(a.date))
+                      .map((transaction, index) => (
+                      <tr 
+                        key={transaction.id || index}
+                        style={{ 
+                          borderBottom: '1px solid #ddd',
+                          background: index % 2 === 0 ? '#f9f9f9' : '#fff'
+                        }}
+                      >
+                        <td style={{ padding: '12px 8px' }}>
+                          {new Date(transaction.date).toLocaleDateString('en-MY', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric'
+                          })}
+                        </td>
+                        <td style={{ padding: '12px 8px' }}>
+                          {transaction.description}
+                        </td>
+                        <td style={{ 
+                          padding: '12px 8px', 
+                          textAlign: 'right',
+                          fontWeight: 600,
+                          color: parseFloat(transaction.amount) < 0 ? 'var(--red)' : 'var(--green)'
+                        }}>
+                          {formatCurrency(Math.abs(transaction.amount))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              borderTop: '4px solid #000',
+              padding: '16px 20px',
+              background: '#f5f5f5',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <span style={{ fontSize: '14px', color: '#666' }}>
+                {categoryTransactions.length} transaction{categoryTransactions.length !== 1 ? 's' : ''}
+              </span>
+              <div style={{ 
+                fontSize: '18px', 
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <span style={{ color: '#666' }}>Total Spent:</span>
+                <span style={{ color: 'var(--red)' }}>
+                  {formatCurrency(calculateTotalSpent())}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

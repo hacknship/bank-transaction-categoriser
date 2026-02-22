@@ -29,6 +29,12 @@ function Settings() {
   const [mergeTargetId, setMergeTargetId] = useState('');
   const [mergeScope, setMergeScope] = useState('current-and-future');
   
+  // Rename modal state
+  const [showRenameScopeModal, setShowRenameScopeModal] = useState(false);
+  const [pendingRename, setPendingRename] = useState(null);
+  const [transactionCountForRename, setTransactionCountForRename] = useState(0);
+  const [renameScope, setRenameScope] = useState('current-and-future');
+  
   const formRef = useRef(null);
 
   // Load categories and their budgets from cloud
@@ -95,6 +101,30 @@ function Settings() {
         return;
       }
 
+      // If editing and name changed, check for transactions
+      if (editingCategory && editingCategory.name !== formData.name) {
+        // Check transaction count
+        const transactions = await API.getTransactions({ 
+          category: editingCategory.name, 
+          limit: '1' 
+        });
+        const hasTransactions = (transactions.transactions?.length || 0) > 0;
+        
+        if (hasTransactions) {
+          // Count total
+          const allTx = await API.getTransactions({ 
+            category: editingCategory.name, 
+            limit: '1000' 
+          });
+          setTransactionCountForRename(allTx.transactions?.length || 0);
+          setPendingRename({ ...formData });
+          setRenameScope('current-and-future');
+          setShowRenameScopeModal(true);
+          setLoading(false);
+          return; // Don't save yet
+        }
+      }
+
       // Set color based on type (expense=yellow, savings=black)
       const color = formData.type === 'expense' ? '#FFD600' : '#000000';
 
@@ -132,6 +162,51 @@ function Settings() {
     } catch (error) {
       console.error('Failed to save category:', error);
       alert('Failed to save category: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  
+  async function confirmRenameWithScope() {
+    if (!pendingRename || !editingCategory) return;
+    
+    setLoading(true);
+    try {
+      await API.saveCategory({
+        id: editingCategory.id,
+        name: pendingRename.name,
+        icon: pendingRename.icon,
+        type: pendingRename.type,
+        color: pendingRename.type === 'expense' ? '#FFD600' : '#000000',
+        affectScope: renameScope
+      });
+      
+      // Then save budget template if amount is provided
+      if (pendingRename.budgetAmount) {
+        await API.updateBudgetTemplate({
+          categoryId: editingCategory.id,
+          amount: parseFloat(pendingRename.budgetAmount),
+          periodType: pendingRename.periodType,
+          showInTracker: pendingRename.showInTracker
+        });
+      }
+      
+      setShowRenameScopeModal(false);
+      setPendingRename(null);
+      await loadData();
+      setShowForm(false);
+      setEditingCategory(null);
+      setFormData({ 
+        name: '', 
+        icon: '📦', 
+        type: 'expense',
+        budgetAmount: '',
+        periodType: 'monthly',
+        showInTracker: true
+      });
+    } catch (error) {
+      console.error('Failed to rename:', error);
+      alert('Failed to rename: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -902,6 +977,131 @@ function Settings() {
                 }}
               >
                 {loading ? 'Merging...' : 'Merge Categories'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Category Scope Modal */}
+      {showRenameScopeModal && editingCategory && pendingRename && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }} onClick={() => setShowRenameScopeModal(false)}>
+          <div style={{
+            background: '#fff',
+            padding: '24px',
+            maxWidth: '500px',
+            width: '90%',
+            border: '3px solid #000',
+            boxShadow: '8px 8px 0 #000'
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>✏️ Rename Category</h3>
+            
+            <p>
+              Category "<strong>{editingCategory.name}</strong>" has <strong>{transactionCountForRename}</strong> transaction(s).
+            </p>
+            <p style={{ fontSize: '14px', marginBottom: '16px' }}>
+              How do you want to handle existing transactions?
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+              <label style={{ 
+                display: 'flex', 
+                alignItems: 'flex-start', 
+                gap: '8px',
+                padding: '12px',
+                border: renameScope === 'future' ? '3px solid #000' : '2px solid #ddd',
+                background: renameScope === 'future' ? '#e3f2fd' : '#fff',
+                cursor: 'pointer'
+              }}>
+                <input 
+                  type="radio" 
+                  name="renameScope"
+                  value="future"
+                  checked={renameScope === 'future'}
+                  onChange={(e) => setRenameScope(e.target.value)}
+                />
+                <div>
+                  <strong>Future only (next month onwards)</strong>
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                    Existing transactions keep the old category name
+                  </div>
+                </div>
+              </label>
+              
+              <label style={{ 
+                display: 'flex', 
+                alignItems: 'flex-start', 
+                gap: '8px',
+                padding: '12px',
+                border: renameScope === 'current-and-future' ? '3px solid #000' : '2px solid #ddd',
+                background: renameScope === 'current-and-future' ? '#e3f2fd' : '#fff',
+                cursor: 'pointer'
+              }}>
+                <input 
+                  type="radio" 
+                  name="renameScope"
+                  value="current-and-future"
+                  checked={renameScope === 'current-and-future'}
+                  onChange={(e) => setRenameScope(e.target.value)}
+                />
+                <div>
+                  <strong>Current and future (this month onwards)</strong>
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                    Previous months keep the old category name for historical accuracy
+                  </div>
+                </div>
+              </label>
+              
+              <label style={{ 
+                display: 'flex', 
+                alignItems: 'flex-start', 
+                gap: '8px',
+                padding: '12px',
+                border: renameScope === 'all' ? '3px solid #000' : '2px solid #ddd',
+                background: renameScope === 'all' ? '#e3f2fd' : '#fff',
+                cursor: 'pointer'
+              }}>
+                <input 
+                  type="radio" 
+                  name="renameScope"
+                  value="all"
+                  checked={renameScope === 'all'}
+                  onChange={(e) => setRenameScope(e.target.value)}
+                />
+                <div>
+                  <strong>All transactions (including past)</strong>
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                    Update all transactions to use the new category name
+                  </div>
+                </div>
+              </label>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button 
+                onClick={() => setShowRenameScopeModal(false)}
+                className="btn"
+                disabled={loading}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmRenameWithScope}
+                className="btn"
+                disabled={loading}
+                style={{ 
+                  background: '#FFD600'
+                }}
+              >
+                {loading ? 'Renaming...' : 'Confirm Rename'}
               </button>
             </div>
           </div>
