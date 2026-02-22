@@ -41,4 +41,21 @@ export const API = {
     method: 'POST', 
     body: JSON.stringify({ txId }) 
   }),
+
+  // Budget Tracking
+  getBudgetForPeriod: (period, type) => {
+    const params = new URLSearchParams({ period });
+    if (type) params.append('type', type);
+    return fetchAPI(`/get-budget-for-period?${params}`);
+  },
+  updateBudgetTemplate: (data) => fetchAPI('/update-budget-template', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
+  getBudgetHistory: () => fetchAPI('/get-budget-history'),
+  updateSnapshotBudget: (data) => fetchAPI('/update-snapshot-budget', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
+  getAvailablePeriods: () => fetchAPI('/get-available-periods'),
 };

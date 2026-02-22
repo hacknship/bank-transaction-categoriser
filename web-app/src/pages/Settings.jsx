@@ -3,25 +3,40 @@ import { API } from '../utils/api';
 
 function Settings() {
   const [categories, setCategories] = useState([]);
+  const [categoryBudgets, setCategoryBudgets] = useState({}); // categoryId -> template data
   const [loading, setLoading] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     icon: '📦',
-    type: 'expense'
+    type: 'expense',
+    budgetAmount: '',
+    periodType: 'monthly',
+    showInTracker: true
   });
   
   const formRef = useRef(null);
 
-  // Load categories from cloud
-  async function loadCategories() {
+  // Load categories and their budgets from cloud
+  async function loadData() {
     setLoading(true);
     try {
-      const data = await API.getCategories();
-      setCategories(data.categories || []);
+      const [catData, historyData] = await Promise.all([
+        API.getCategories(),
+        API.getBudgetHistory().catch(() => ({ currentTemplates: [] })) // Graceful fallback
+      ]);
+      
+      setCategories(catData.categories || []);
+      
+      // Build budget lookup map
+      const budgetMap = {};
+      (historyData.currentTemplates || []).forEach(template => {
+        budgetMap[template.category_id] = template;
+      });
+      setCategoryBudgets(budgetMap);
     } catch (error) {
-      console.error('Failed to load categories:', error);
+      console.error('Failed to load data:', error);
     } finally {
       setLoading(false);
     }
@@ -29,7 +44,7 @@ function Settings() {
 
   // Initial load
   useEffect(() => {
-    loadCategories();
+    loadData();
   }, []);
 
   // Default suggested categories (no color)
@@ -70,16 +85,37 @@ function Settings() {
       // Set color based on type (expense=yellow, savings=black)
       const color = formData.type === 'expense' ? '#FFD600' : '#000000';
 
-      await API.saveCategory({
+      // Save category first
+      const savedCategory = await API.saveCategory({
         id: editingCategory?.id,
-        ...formData,
+        name: formData.name,
+        icon: formData.icon,
+        type: formData.type,
         color
       });
+
+      // Then save budget template if amount is provided
+      const categoryId = editingCategory?.id || savedCategory.category?.id;
+      if (categoryId && formData.budgetAmount) {
+        await API.updateBudgetTemplate({
+          categoryId: categoryId,
+          amount: parseFloat(formData.budgetAmount),
+          periodType: formData.periodType,
+          showInTracker: formData.showInTracker
+        });
+      }
       
-      await loadCategories();
+      await loadData();
       setShowForm(false);
       setEditingCategory(null);
-      setFormData({ name: '', icon: '📦', type: 'expense' });
+      setFormData({ 
+        name: '', 
+        icon: '📦', 
+        type: 'expense',
+        budgetAmount: '',
+        periodType: 'monthly',
+        showInTracker: true
+      });
     } catch (error) {
       console.error('Failed to save category:', error);
       alert('Failed to save category: ' + error.message);
@@ -96,7 +132,7 @@ function Settings() {
     setLoading(true);
     try {
       await API.deleteCategory(id);
-      await loadCategories();
+      await loadData();
     } catch (error) {
       console.error('Failed to delete category:', error);
       alert('Failed to delete category: ' + error.message);
@@ -106,15 +142,18 @@ function Settings() {
   }
 
   function handleEdit(category) {
+    const budget = categoryBudgets[category.id];
     setEditingCategory(category);
     setFormData({
       name: category.name,
       icon: category.icon || '📦',
-      type: category.type || 'expense'
+      type: category.type || 'expense',
+      budgetAmount: budget?.amount || '',
+      periodType: budget?.period_type || 'monthly',
+      showInTracker: budget?.show_in_tracker !== false
     });
     setShowForm(true);
     
-    // Scroll to form after a short delay to allow render
     setTimeout(() => {
       formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
@@ -122,7 +161,14 @@ function Settings() {
 
   function handleAddNew() {
     setEditingCategory(null);
-    setFormData({ name: '', icon: '📦', type: 'expense' });
+    setFormData({ 
+      name: '', 
+      icon: '📦', 
+      type: 'expense',
+      budgetAmount: '',
+      periodType: 'monthly',
+      showInTracker: true
+    });
     setShowForm(true);
     
     setTimeout(() => {
@@ -140,7 +186,7 @@ function Settings() {
     try {
       const color = suggested.type === 'expense' ? '#FFD600' : '#000000';
       await API.saveCategory({ ...suggested, color });
-      await loadCategories();
+      await loadData();
     } catch (error) {
       console.error('Failed to add category:', error);
       alert('Failed to add category: ' + error.message);
@@ -152,7 +198,14 @@ function Settings() {
   function handleCancel() {
     setShowForm(false);
     setEditingCategory(null);
-    setFormData({ name: '', icon: '📦', type: 'expense' });
+    setFormData({ 
+      name: '', 
+      icon: '📦', 
+      type: 'expense',
+      budgetAmount: '',
+      periodType: 'monthly',
+      showInTracker: true
+    });
   }
 
   // Separate categories by type
@@ -167,11 +220,78 @@ function Settings() {
   const suggestedExpense = suggestedCategories.filter(c => c.type === 'expense');
   const suggestedSavings = suggestedCategories.filter(c => c.type === 'savings');
 
-  // Get background color based on type
-  const getTypeStyle = (type) => {
-    return type === 'savings' 
-      ? { background: '#000', color: '#FFD600' }  // Savings: black bg, yellow text
-      : { background: '#FFD600', color: '#000' }; // Expense: yellow bg, black text
+  // Helper to format currency
+  const formatCurrency = (amount) => {
+    if (!amount) return '';
+    return `RM ${parseFloat(amount).toLocaleString('en-MY', { 
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0 
+    })}`;
+  };
+
+  // Category item component
+  const CategoryItem = ({ cat, isSavings }) => {
+    const budget = categoryBudgets[cat.id];
+    const hasBudget = budget && budget.amount > 0;
+    
+    return (
+      <div 
+        key={cat.id} 
+        className="category-item" 
+        style={{ 
+          position: 'relative',
+          background: isSavings ? '#f5f5f5' : '#fff'
+        }}
+      >
+        <div 
+          className="category-item-icon"
+          style={{ 
+            background: isSavings ? '#000' : '#FFD600', 
+            color: isSavings ? '#FFD600' : '#000', 
+            border: '2px solid #000' 
+          }}
+        >
+          {cat.icon || (isSavings ? '🏦' : '📦')}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div className="category-item-name">{cat.name}</div>
+          {hasBudget && (
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+              {formatCurrency(budget.amount)} ({budget.period_type})
+              {!budget.show_in_tracker && ' - Hidden'}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
+          <button 
+            onClick={() => handleEdit(cat)}
+            style={{
+              background: '#fff',
+              border: '2px solid #000',
+              padding: '4px 8px',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+            title="Edit"
+          >
+            ✏️
+          </button>
+          <button 
+            onClick={() => handleDelete(cat.id, cat.name)}
+            style={{
+              background: '#ff5555',
+              border: '2px solid #000',
+              padding: '4px 8px',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+            title="Delete"
+          >
+            🗑️
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -190,13 +310,14 @@ function Settings() {
               onClick={handleAddNew}
               className="btn btn-primary"
               disabled={loading}
+              style={{ background: '#FFD600' }}
             >
               ➕ Add Category
             </button>
           </div>
           
           <p className="settings-description">
-            Manage categories for transaction categorization. 
+            Manage categories for transaction categorization and set budget amounts. 
             Changes sync automatically to the Chrome extension.
           </p>
 
@@ -273,11 +394,83 @@ function Settings() {
                   </span>
                 </div>
 
+                {/* Budget Configuration */}
+                <div style={{ 
+                  background: '#fff', 
+                  padding: '16px', 
+                  border: '3px solid #000',
+                  marginBottom: '16px'
+                }}>
+                  <h4 style={{ marginTop: 0, marginBottom: '12px', fontSize: '14px', textTransform: 'uppercase' }}>
+                    💰 Budget Configuration
+                  </h4>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 700, marginBottom: '4px', fontSize: '13px' }}>
+                        Budget Amount
+                      </label>
+                      <input 
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={formData.budgetAmount}
+                        onChange={(e) => setFormData({...formData, budgetAmount: e.target.value})}
+                        style={{ 
+                          width: '100%', 
+                          padding: '8px', 
+                          border: '3px solid #000',
+                          fontSize: '16px'
+                        }}
+                        placeholder="e.g. 1000"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 700, marginBottom: '4px', fontSize: '13px' }}>
+                        Period
+                      </label>
+                      <select
+                        value={formData.periodType}
+                        onChange={(e) => setFormData({...formData, periodType: e.target.value})}
+                        style={{ 
+                          width: '100%', 
+                          padding: '8px', 
+                          border: '3px solid #000',
+                          fontSize: '16px',
+                          background: '#fff'
+                        }}
+                      >
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="open">Open (No Period)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <label style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.showInTracker}
+                      onChange={(e) => setFormData({...formData, showInTracker: e.target.checked})}
+                      style={{ width: '18px', height: '18px' }}
+                    />
+                    Show in tracker page
+                  </label>
+                </div>
+
                 <div style={{ display: 'flex', gap: '12px' }}>
                   <button 
                     type="submit" 
                     className="btn btn-primary"
                     disabled={loading || !formData.name.trim()}
+                    style={{ background: '#FFD600' }}
                   >
                     {loading ? 'Saving...' : (editingCategory ? '💾 Save Changes' : '➕ Add Category')}
                   </button>
@@ -312,43 +505,7 @@ function Settings() {
             </h3>
             <div className="category-list">
               {expenseCategories.map(cat => (
-                <div key={cat.id} className="category-item" style={{ position: 'relative' }}>
-                  <div 
-                    className="category-item-icon"
-                    style={{ background: '#FFD600', color: '#000', border: '2px solid #000' }}
-                  >
-                    {cat.icon || '📦'}
-                  </div>
-                  <div className="category-item-name">{cat.name}</div>
-                  <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
-                    <button 
-                      onClick={() => handleEdit(cat)}
-                      style={{
-                        background: '#fff',
-                        border: '2px solid #000',
-                        padding: '4px 8px',
-                        cursor: 'pointer',
-                        fontSize: '12px'
-                      }}
-                      title="Edit"
-                    >
-                      ✏️
-                    </button>
-                    <button 
-                      onClick={() => handleDelete(cat.id, cat.name)}
-                      style={{
-                        background: '#ff5555',
-                        border: '2px solid #000',
-                        padding: '4px 8px',
-                        cursor: 'pointer',
-                        fontSize: '12px'
-                      }}
-                      title="Delete"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
+                <CategoryItem key={cat.id} cat={cat} isSavings={false} />
               ))}
             </div>
           </div>
@@ -371,43 +528,7 @@ function Settings() {
             </h3>
             <div className="category-list">
               {savingsCategories.map(cat => (
-                <div key={cat.id} className="category-item" style={{ background: '#f5f5f5', position: 'relative' }}>
-                  <div 
-                    className="category-item-icon"
-                    style={{ background: '#000', color: '#FFD600', border: '2px solid #000' }}
-                  >
-                    {cat.icon || '🏦'}
-                  </div>
-                  <div className="category-item-name">{cat.name}</div>
-                  <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
-                    <button 
-                      onClick={() => handleEdit(cat)}
-                      style={{
-                        background: '#fff',
-                        border: '2px solid #000',
-                        padding: '4px 8px',
-                        cursor: 'pointer',
-                        fontSize: '12px'
-                      }}
-                      title="Edit"
-                    >
-                      ✏️
-                    </button>
-                    <button 
-                      onClick={() => handleDelete(cat.id, cat.name)}
-                      style={{
-                        background: '#ff5555',
-                        border: '2px solid #000',
-                        padding: '4px 8px',
-                        cursor: 'pointer',
-                        fontSize: '12px'
-                      }}
-                      title="Delete"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
+                <CategoryItem key={cat.id} cat={cat} isSavings={true} />
               ))}
             </div>
           </div>
