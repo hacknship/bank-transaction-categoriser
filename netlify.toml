@@ -3,9 +3,16 @@
   publish = "web-app/dist"
   functions = "netlify/functions"
 
+# API functions - must come BEFORE SPA redirect
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
+  status = 200
+
+# SPA fallback - must come AFTER API
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
   status = 200
 
 [dev]
