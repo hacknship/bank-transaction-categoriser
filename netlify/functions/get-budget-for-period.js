@@ -87,6 +87,20 @@ exports.handler = async (event) => {
       )
     `, [periodStart, periodEndStr, versionId]);
 
+    // Update existing snapshots if the template amount has changed
+    // This ensures budgets set after snapshot creation get updated
+    await client.query(`
+      UPDATE budget_snapshots bs
+      SET 
+        budgeted_amount = bt.amount,
+        period_type = COALESCE(bt.period_type, 'monthly'),
+        updated_at = NOW()
+      FROM budget_templates bt
+      WHERE bs.category_id = bt.category_id
+      AND bs.period_start = $1::date
+      AND (bs.budgeted_amount != bt.amount OR bs.period_type != COALESCE(bt.period_type, 'monthly'))
+    `, [periodStart]);
+
     // Get all snapshots for this period with actual spending
     // Use the snapshot's period_type (which is the category's period_type)
     let query = `
