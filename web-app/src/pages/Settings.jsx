@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { API } from '../utils/api';
 
 function Settings() {
@@ -9,9 +9,10 @@ function Settings() {
   const [formData, setFormData] = useState({
     name: '',
     icon: '📦',
-    color: '#FFD600',
     type: 'expense'
   });
+  
+  const formRef = useRef(null);
 
   // Load categories from cloud
   async function loadCategories() {
@@ -31,22 +32,22 @@ function Settings() {
     loadCategories();
   }, []);
 
-  // Default suggested categories
+  // Default suggested categories (no color)
   const DEFAULT_CATEGORIES = [
-    { name: 'Food', icon: '🍔', color: '#FFD600', type: 'expense' },
-    { name: 'Transport', icon: '🚗', color: '#333333', type: 'expense' },
-    { name: 'Dining', icon: '🍽️', color: '#FF3333', type: 'expense' },
-    { name: 'Shopping', icon: '🛍️', color: '#00C853', type: 'expense' },
-    { name: 'Medical', icon: '💊', color: '#FF5555', type: 'expense' },
-    { name: 'Entertainment', icon: '🎬', color: '#9C27B0', type: 'expense' },
-    { name: 'Utilities', icon: '💡', color: '#FFD600', type: 'expense' },
-    { name: 'Groceries', icon: '🛒', color: '#4CAF50', type: 'expense' },
-    { name: 'Education', icon: '📚', color: '#2196F3', type: 'expense' },
-    { name: 'Rent', icon: '🏠', color: '#795548', type: 'expense' },
-    { name: 'Others', icon: '📦', color: '#666666', type: 'expense' },
-    { name: 'Savings', icon: '🏦', color: '#00BCD4', type: 'savings' },
-    { name: 'Investments', icon: '📈', color: '#3F51B5', type: 'savings' },
-    { name: 'Emergency Fund', icon: '🛡️', color: '#009688', type: 'savings' },
+    { name: 'Food', icon: '🍔', type: 'expense' },
+    { name: 'Transport', icon: '🚗', type: 'expense' },
+    { name: 'Dining', icon: '🍽️', type: 'expense' },
+    { name: 'Shopping', icon: '🛍️', type: 'expense' },
+    { name: 'Medical', icon: '💊', type: 'expense' },
+    { name: 'Entertainment', icon: '🎬', type: 'expense' },
+    { name: 'Utilities', icon: '💡', type: 'expense' },
+    { name: 'Groceries', icon: '🛒', type: 'expense' },
+    { name: 'Education', icon: '📚', type: 'expense' },
+    { name: 'Rent', icon: '🏠', type: 'expense' },
+    { name: 'Others', icon: '📦', type: 'expense' },
+    { name: 'Savings', icon: '🏦', type: 'savings' },
+    { name: 'Investments', icon: '📈', type: 'savings' },
+    { name: 'Emergency Fund', icon: '🛡️', type: 'savings' },
   ];
 
   async function handleSave(e) {
@@ -66,15 +67,19 @@ function Settings() {
         return;
       }
 
+      // Set color based on type (expense=yellow, savings=black)
+      const color = formData.type === 'expense' ? '#FFD600' : '#000000';
+
       await API.saveCategory({
         id: editingCategory?.id,
-        ...formData
+        ...formData,
+        color
       });
       
       await loadCategories();
       setShowForm(false);
       setEditingCategory(null);
-      setFormData({ name: '', icon: '📦', color: '#FFD600', type: 'expense' });
+      setFormData({ name: '', icon: '📦', type: 'expense' });
     } catch (error) {
       console.error('Failed to save category:', error);
       alert('Failed to save category: ' + error.message);
@@ -84,7 +89,7 @@ function Settings() {
   }
 
   async function handleDelete(id, name) {
-    if (!confirm(`Delete category "${name}"?\n\nNote: This will soft-delete (hide) the category. Existing transactions using this category will keep their category label.`)) {
+    if (!confirm(`Delete category "${name}"?\n\nThis will permanently remove the category.`)) {
       return;
     }
     
@@ -105,16 +110,24 @@ function Settings() {
     setFormData({
       name: category.name,
       icon: category.icon || '📦',
-      color: category.color || '#FFD600',
       type: category.type || 'expense'
     });
     setShowForm(true);
+    
+    // Scroll to form after a short delay to allow render
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   }
 
   function handleAddNew() {
     setEditingCategory(null);
-    setFormData({ name: '', icon: '📦', color: '#FFD600', type: 'expense' });
+    setFormData({ name: '', icon: '📦', type: 'expense' });
     setShowForm(true);
+    
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   }
 
   async function handleQuickAdd(suggested) {
@@ -125,7 +138,8 @@ function Settings() {
 
     setLoading(true);
     try {
-      await API.saveCategory(suggested);
+      const color = suggested.type === 'expense' ? '#FFD600' : '#000000';
+      await API.saveCategory({ ...suggested, color });
       await loadCategories();
     } catch (error) {
       console.error('Failed to add category:', error);
@@ -138,7 +152,7 @@ function Settings() {
   function handleCancel() {
     setShowForm(false);
     setEditingCategory(null);
-    setFormData({ name: '', icon: '📦', color: '#FFD600', type: 'expense' });
+    setFormData({ name: '', icon: '📦', type: 'expense' });
   }
 
   // Separate categories by type
@@ -153,7 +167,12 @@ function Settings() {
   const suggestedExpense = suggestedCategories.filter(c => c.type === 'expense');
   const suggestedSavings = suggestedCategories.filter(c => c.type === 'savings');
 
-  const commonEmojis = ['📦', '🍔', '🚗', '🍽️', '🛍️', '💊', '🎬', '💡', '🛒', '📚', '🏠', '🏦', '📈', '🛡️', '💰', '💳', '🎮', '✈️', '🏥', '🎓', '🐶', '👶', '💄', '🔧'];
+  // Get background color based on type
+  const getTypeStyle = (type) => {
+    return type === 'savings' 
+      ? { background: '#000', color: '#FFD600' }  // Savings: black bg, yellow text
+      : { background: '#FFD600', color: '#000' }; // Expense: yellow bg, black text
+  };
 
   return (
     <div style={{ paddingTop: '0' }}>
@@ -185,13 +204,16 @@ function Settings() {
 
           {/* Add/Edit Form */}
           {showForm && (
-            <div style={{ 
-              background: '#f5f5f5', 
-              padding: '20px', 
-              marginBottom: '24px',
-              border: '3px solid #000',
-              boxShadow: '4px 4px 0 #000'
-            }}>
+            <div 
+              ref={formRef}
+              style={{ 
+                background: '#f5f5f5', 
+                padding: '20px', 
+                marginBottom: '24px',
+                border: '3px solid #000',
+                boxShadow: '4px 4px 0 #000'
+              }}
+            >
               <h3 style={{ marginTop: 0 }}>{editingCategory ? '✏️ Edit Category' : '➕ Add New Category'}</h3>
               <form onSubmit={handleSave}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
@@ -224,62 +246,31 @@ function Settings() {
                         background: '#fff'
                       }}
                     >
-                      <option value="expense">📤 Expense</option>
-                      <option value="savings">📥 Savings/Investment</option>
+                      <option value="expense">📤 Expense (Yellow)</option>
+                      <option value="savings">📥 Savings/Investment (Black)</option>
                     </select>
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: '16px', marginBottom: '16px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontWeight: 700, marginBottom: '4px' }}>Icon</label>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      {commonEmojis.map(emoji => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          onClick={() => setFormData({...formData, icon: emoji})}
-                          style={{
-                            width: '40px',
-                            height: '40px',
-                            fontSize: '20px',
-                            border: formData.icon === emoji ? '3px solid #000' : '2px solid #ddd',
-                            background: formData.icon === emoji ? '#FFD600' : '#fff',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                      <input 
-                        type="text"
-                        value={formData.icon}
-                        onChange={(e) => setFormData({...formData, icon: e.target.value})}
-                        maxLength={2}
-                        style={{ 
-                          width: '50px', 
-                          padding: '8px', 
-                          border: '3px solid #000',
-                          fontSize: '20px',
-                          textAlign: 'center'
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontWeight: 700, marginBottom: '4px' }}>Color</label>
-                    <input 
-                      type="color"
-                      value={formData.color}
-                      onChange={(e) => setFormData({...formData, color: e.target.value})}
-                      style={{ 
-                        width: '100%', 
-                        height: '50px',
-                        border: '3px solid #000',
-                        cursor: 'pointer'
-                      }}
-                    />
-                  </div>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontWeight: 700, marginBottom: '4px' }}>Icon (Emoji)</label>
+                  <input 
+                    type="text"
+                    value={formData.icon}
+                    onChange={(e) => setFormData({...formData, icon: e.target.value})}
+                    maxLength={10}
+                    style={{ 
+                      width: '80px', 
+                      padding: '8px', 
+                      border: '3px solid #000',
+                      fontSize: '24px',
+                      textAlign: 'center'
+                    }}
+                    placeholder="📦"
+                  />
+                  <span style={{ marginLeft: '12px', color: '#666', fontSize: '14px' }}>
+                    Paste any emoji here
+                  </span>
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px' }}>
@@ -312,8 +303,8 @@ function Settings() {
               letterSpacing: '1px',
               marginBottom: '12px',
               padding: '8px 12px',
-              background: '#000',
-              color: '#FFD600',
+              background: '#FFD600',
+              color: '#000',
               display: 'inline-block',
               border: '3px solid #000'
             }}>
@@ -324,7 +315,7 @@ function Settings() {
                 <div key={cat.id} className="category-item" style={{ position: 'relative' }}>
                   <div 
                     className="category-item-icon"
-                    style={{ background: cat.color || '#FFD600' }}
+                    style={{ background: '#FFD600', color: '#000', border: '2px solid #000' }}
                   >
                     {cat.icon || '📦'}
                   </div>
@@ -371,8 +362,8 @@ function Settings() {
               letterSpacing: '1px',
               marginBottom: '12px',
               padding: '8px 12px',
-              background: '#2196F3',
-              color: '#fff',
+              background: '#000',
+              color: '#FFD600',
               display: 'inline-block',
               border: '3px solid #000'
             }}>
@@ -380,10 +371,10 @@ function Settings() {
             </h3>
             <div className="category-list">
               {savingsCategories.map(cat => (
-                <div key={cat.id} className="category-item" style={{ background: '#e3f2fd', position: 'relative' }}>
+                <div key={cat.id} className="category-item" style={{ background: '#f5f5f5', position: 'relative' }}>
                   <div 
                     className="category-item-icon"
-                    style={{ background: cat.color || '#2196F3' }}
+                    style={{ background: '#000', color: '#FFD600', border: '2px solid #000' }}
                   >
                     {cat.icon || '🏦'}
                   </div>
@@ -443,10 +434,11 @@ function Settings() {
                           alignItems: 'center',
                           gap: '6px',
                           padding: '8px 12px',
-                          background: '#fff',
+                          background: '#FFD600',
                           border: '2px solid #000',
                           cursor: 'pointer',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          color: '#000'
                         }}
                       >
                         <span>{cat.icon}</span>
@@ -472,15 +464,16 @@ function Settings() {
                           alignItems: 'center',
                           gap: '6px',
                           padding: '8px 12px',
-                          background: '#e3f2fd',
+                          background: '#000',
                           border: '2px solid #000',
                           cursor: 'pointer',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          color: '#FFD600'
                         }}
                       >
                         <span>{cat.icon}</span>
                         <span>{cat.name}</span>
-                        <span style={{ color: '#666', fontSize: '12px' }}>+</span>
+                        <span style={{ color: '#FFD600', fontSize: '12px' }}>+</span>
                       </button>
                     ))}
                   </div>

@@ -8,25 +8,23 @@
   // Ghost Database API
   const API_BASE = 'https://ss-transactions-tracker.netlify.app/.netlify/functions';
   
-  let categoriesCache = null;
-  let transactionsCache = null;
+  // NO CACHING - always fetch fresh data
   let processedRows = new Set();
   let kbRow = -1;
   let kbCol = 0;
   let dropdownOpen = false;
   let isProcessing = false;
 
-  // Fetch categories from Ghost DB (once per page)
+  // Fetch categories from Ghost DB (fresh every time)
   async function fetchCategories() {
-    if (categoriesCache) return categoriesCache;
-    
     try {
-      const res = await fetch(`${API_BASE}/get-categories`);
+      // Add cache-busting query param
+      const res = await fetch(`${API_BASE}/get-categories?t=${Date.now()}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
-      categoriesCache = (data.categories || []).map(c => c.name);
-      console.log('[MBT] Loaded categories:', categoriesCache);
-      return categoriesCache;
+      const cats = (data.categories || []).map(c => c.name);
+      console.log('[MBT] Loaded categories:', cats);
+      return cats;
     } catch (e) {
       console.error('[MBT] Failed to fetch categories:', e);
       return [];
@@ -35,10 +33,8 @@
 
   // Fetch saved transactions from Ghost DB
   async function fetchTransactions(accountId) {
-    if (transactionsCache) return transactionsCache;
-    
     try {
-      const url = `${API_BASE}/get-transactions?accountId=${encodeURIComponent(accountId)}&limit=500`;
+      const url = `${API_BASE}/get-transactions?accountId=${encodeURIComponent(accountId)}&limit=500&t=${Date.now()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch transactions');
       const data = await res.json();
@@ -49,7 +45,6 @@
         txMap[tx.tx_id] = tx;
       });
       
-      transactionsCache = txMap;
       console.log('[MBT] Loaded', Object.keys(txMap).length, 'saved transactions');
       return txMap;
     } catch (e) {
@@ -105,15 +100,6 @@
       });
       
       if (res.ok) {
-        // Update cache
-        if (transactionsCache) {
-          transactionsCache[txId] = {
-            ...transactionsCache[txId],
-            category: data.category,
-            notes: data.notes,
-            tx_id: txId
-          };
-        }
         console.log('[MBT] Saved to Ghost DB:', txId);
         return true;
       } else {
@@ -401,7 +387,6 @@
 
   function resetAndProcess() {
     processedRows.clear();
-    transactionsCache = null;
     kbRow = -1; kbCol = 0;
     clearHL();
     document.querySelectorAll('.mbt-cell').forEach(function(el) { el.remove(); });
@@ -451,7 +436,6 @@
       lastUrl = location.href;
       if (location.href.includes('accountDetails')) {
         processedRows.clear();
-        transactionsCache = null;
         kbRow = -1; kbCol = 0;
         clearHL();
         isProcessing = false;

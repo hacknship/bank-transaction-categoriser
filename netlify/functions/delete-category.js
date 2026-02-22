@@ -31,10 +31,9 @@ exports.handler = async (event, context) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'ID required' }) };
     }
 
-    // Soft delete - set is_active to false
+    // Hard delete - remove the category completely
     const result = await client.query(`
-      UPDATE categories 
-      SET is_active = false, updated_at = NOW()
+      DELETE FROM categories 
       WHERE id = $1
       RETURNING *
     `, [id]);
@@ -48,7 +47,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ success: true, category: result.rows[0] })
+      body: JSON.stringify({ success: true, deleted: result.rows[0] })
     };
 
   } catch (error) {
