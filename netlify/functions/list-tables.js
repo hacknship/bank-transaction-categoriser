@@ -14,22 +14,13 @@ exports.handler = async (event) => {
   try {
     await client.connect();
     
-    const table = event.queryStringParameters?.table || 'transactions';
-    
-    // Get column info for specified table
+    // List all tables
     const result = await client.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = $1
-    `, [table]);
-    
-    // Check if table exists
-    const tableCheck = await client.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_name = $1
-      )
-    `, [table]);
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+      ORDER BY table_name
+    `);
     
     await client.end();
 
@@ -37,9 +28,7 @@ exports.handler = async (event) => {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        table: table,
-        tableExists: tableCheck.rows[0].exists,
-        columns: result.rows
+        tables: result.rows.map(r => r.table_name)
       }, null, 2)
     };
   } catch (error) {
