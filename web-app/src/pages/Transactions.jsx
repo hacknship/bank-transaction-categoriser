@@ -37,18 +37,9 @@ function Transactions() {
     }
   }, []);
 
-  // Initial load
+  // Load on mount and when filters change
   useEffect(() => {
     loadData();
-  }, [loadData]);
-
-  // Poll for changes (real-time updates)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadData();
-    }, 10000); // Check every 10 seconds
-    
-    return () => clearInterval(interval);
   }, [loadData]);
 
   // Filter transactions
