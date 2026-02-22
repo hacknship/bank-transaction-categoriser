@@ -68,7 +68,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transactionId: data.txId,
+          txId: data.txId,
           accountId: data.accountId,
           txDate: data.date,
           description: data.description,

@@ -30,19 +30,19 @@ exports.handler = async (event, context) => {
   try {
     await client.connect();
 
-    const { transactionId, accountId, txDate, description, amount, category, notes } = JSON.parse(event.body);
+    const { txId, accountId, txDate, description, amount, category, notes } = JSON.parse(event.body);
 
     const result = await client.query(`
       INSERT INTO transactions 
-        (transaction_id, account_id, tx_date, description, amount, category, notes)
+        (tx_id, account_id, tx_date, description, amount, category, notes)
       VALUES 
         ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (transaction_id) DO UPDATE SET
+      ON CONFLICT (tx_id) DO UPDATE SET
         category = EXCLUDED.category,
         notes = EXCLUDED.notes,
         updated_at = NOW()
       RETURNING *
-    `, [transactionId, accountId, txDate, description, amount, category, notes]);
+    `, [txId, accountId, txDate, description, amount, category, notes]);
 
     await client.end();
 
