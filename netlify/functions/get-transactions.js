@@ -1,12 +1,15 @@
 const { Client } = require('pg');
 
-exports.handler = async (event) => {
+exports.handler = async (event, context) => {
+  // CORS headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Content-Type': 'application/json'
   };
 
+  // Handle preflight
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers, body: '' };
   }
@@ -19,43 +22,29 @@ exports.handler = async (event) => {
   try {
     await client.connect();
 
-    const params = event.queryStringParameters || {};
-    const { accountId, startDate, endDate, category, uncategorized } = params;
+    const { accountId, category, limit = '100' } = event.queryStringParameters || {};
 
-    let query = `
-      SELECT * FROM transactions
-      WHERE 1=1
-    `;
-    const queryParams = [];
-    let paramIndex = 1;
+    let query = 'SELECT * FROM transactions';
+    const params = [];
+    const conditions = [];
 
     if (accountId) {
-      query += ` AND account_id = $${paramIndex++}`;
-      queryParams.push(accountId);
+      params.push(accountId);
+      conditions.push(`account_id = $${params.length}`);
     }
-
-    if (startDate) {
-      query += ` AND tx_date >= $${paramIndex++}`;
-      queryParams.push(startDate);
-    }
-
-    if (endDate) {
-      query += ` AND tx_date <= $${paramIndex++}`;
-      queryParams.push(endDate);
-    }
-
     if (category) {
-      query += ` AND category = $${paramIndex++}`;
-      queryParams.push(category);
+      params.push(category);
+      conditions.push(`category = $${params.length}`);
     }
 
-    if (uncategorized === 'true') {
-      query += ` AND (category IS NULL OR category = '')`;
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ' ORDER BY tx_date DESC';
+    query += ` ORDER BY tx_date DESC LIMIT $${params.length + 1}`;
+    params.push(parseInt(limit));
 
-    const result = await client.query(query, queryParams);
+    const result = await client.query(query, params);
     await client.end();
 
     return {

@@ -46,7 +46,7 @@ function Transactions() {
   useEffect(() => {
     const interval = setInterval(() => {
       loadData();
-    }, 2000); // Check every 2 seconds
+    }, 10000); // Check every 10 seconds
     
     return () => clearInterval(interval);
   }, [loadData]);

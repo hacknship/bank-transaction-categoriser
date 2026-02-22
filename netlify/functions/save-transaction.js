@@ -1,18 +1,25 @@
 const { Client } = require('pg');
 
-exports.handler = async (event) => {
+exports.handler = async (event, context) => {
+  // CORS headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Content-Type': 'application/json'
   };
 
+  // Handle preflight
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+    return { statusCode: 204, headers, body: '' };
   }
 
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
+    return {
+      statusCode: 405,
+      headers,
+      body: JSON.stringify({ error: 'Method not allowed' })
+    };
   }
 
   const client = new Client({
@@ -26,18 +33,15 @@ exports.handler = async (event) => {
     const { transactionId, accountId, txDate, description, amount, category, notes } = JSON.parse(event.body);
 
     const result = await client.query(`
-      INSERT INTO transactions (tx_id, account_id, tx_date, description, amount, category, notes, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-      ON CONFLICT (tx_id)
-      DO UPDATE SET 
-        account_id = EXCLUDED.account_id,
-        tx_date = EXCLUDED.tx_date,
-        description = EXCLUDED.description,
-        amount = EXCLUDED.amount,
+      INSERT INTO transactions 
+        (transaction_id, account_id, tx_date, description, amount, category, notes)
+      VALUES 
+        ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (transaction_id) DO UPDATE SET
         category = EXCLUDED.category,
         notes = EXCLUDED.notes,
         updated_at = NOW()
-      RETURNING *;
+      RETURNING *
     `, [transactionId, accountId, txDate, description, amount, category, notes]);
 
     await client.end();
