@@ -9,8 +9,9 @@ export function useBudget(period, type) {
     queryFn: () => API.getBudgetForPeriod(period, type),
     // Only fetch when period is available
     enabled: !!period,
-    // Keep data for 10 minutes (budgets don't change often)
-    staleTime: 10 * 60 * 1000,
+    // No caching - always fetch fresh to ensure category names are current
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 

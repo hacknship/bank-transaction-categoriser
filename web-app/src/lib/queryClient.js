@@ -3,16 +3,16 @@ import { QueryClient } from '@tanstack/react-query';
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Data stays fresh for 5 minutes
-      staleTime: 5 * 60 * 1000,
-      // Keep data in cache for 30 minutes even if unused
-      gcTime: 30 * 60 * 1000,
-      // Refetch when window regains focus
+      // Budget data should be fresh - categories can be renamed
+      staleTime: 0,
+      // Keep data briefly
+      gcTime: 60 * 1000,
+      // Always refetch when window regains focus
       refetchOnWindowFocus: true,
+      // Refetch on mount to ensure fresh data
+      refetchOnMount: 'always',
       // Retry failed requests 1 time
       retry: 1,
-      // Don't refetch on mount if data exists (use cache)
-      refetchOnMount: 'always',
     },
   },
 });

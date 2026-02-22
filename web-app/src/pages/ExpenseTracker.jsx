@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useBudget, useAvailablePeriods, useUpdateSnapshotBudget } from '../hooks/useBudget';
+import { queryClient } from '../lib/queryClient';
 import API from '../utils/api';
 
 function ExpenseTracker() {
@@ -439,6 +440,23 @@ function ExpenseTracker() {
           }}
         >
           {isFetching ? '🔄 Refreshing...' : '🔄 Refresh'}
+        </button>
+
+        {/* Clear Cache Button */}
+        <button 
+          className="btn-small"
+          onClick={() => {
+            queryClient.clear();
+            window.location.reload();
+          }}
+          style={{ 
+            background: '#ff5555',
+            color: '#fff',
+            marginLeft: '8px'
+          }}
+          title="Clear cache and reload if old categories still show"
+        >
+          🧹 Clear Cache
         </button>
 
         {isPastMonth() && (
