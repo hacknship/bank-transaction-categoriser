@@ -23,9 +23,15 @@ export const API = {
     method: 'POST', 
     body: JSON.stringify(data) 
   }),
-  deleteCategory: (id) => fetchAPI('/delete-category', { 
+  deleteCategory: (id, mode = 'unused') => fetchAPI('/delete-category', { 
     method: 'POST', 
-    body: JSON.stringify({ id }) 
+    body: JSON.stringify({ id, mode }) 
+  }),
+  
+  // Category merge/rename with scope options
+  mergeCategories: (data) => fetchAPI('/merge-categories', {
+    method: 'POST',
+    body: JSON.stringify(data)
   }),
   
   // Transactions

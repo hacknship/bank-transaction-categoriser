@@ -24,30 +24,141 @@ exports.handler = async (event, context) => {
   try {
     await client.connect();
 
-    const { id } = JSON.parse(event.body);
+    const { id, mode = 'unused' } = JSON.parse(event.body);
 
+    // Validate ID
     if (!id) {
       await client.end();
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'ID required' }) };
+      return { 
+        statusCode: 400, 
+        headers, 
+        body: JSON.stringify({ error: 'ID required' }) 
+      };
     }
 
-    // Hard delete - remove the category completely
-    const result = await client.query(`
-      DELETE FROM categories 
-      WHERE id = $1
-      RETURNING *
-    `, [id]);
+    // Validate mode
+    const validModes = ['unused', 'current-month', 'all-months'];
+    if (!validModes.includes(mode)) {
+      await client.end();
+      return { 
+        statusCode: 400, 
+        headers, 
+        body: JSON.stringify({ error: 'Invalid mode. Must be one of: unused, current-month, all-months' }) 
+      };
+    }
+
+    // Get category info first
+    const categoryResult = await client.query(
+      'SELECT * FROM categories WHERE id = $1',
+      [id]
+    );
+
+    if (categoryResult.rowCount === 0) {
+      await client.end();
+      return { 
+        statusCode: 404, 
+        headers, 
+        body: JSON.stringify({ error: 'Category not found' }) 
+      };
+    }
+
+    const category = categoryResult.rows[0];
+
+    // Count transactions using this category (by category name)
+    const transactionCountResult = await client.query(
+      'SELECT COUNT(*) as count FROM transactions WHERE category = $1',
+      [category.name]
+    );
+    const transactionCount = parseInt(transactionCountResult.rows[0].count, 10);
+
+    // Check if category has budget_templates
+    const budgetTemplateResult = await client.query(
+      'SELECT COUNT(*) as count FROM budget_templates WHERE category_id = $1',
+      [id]
+    );
+    const hasBudgetTemplate = parseInt(budgetTemplateResult.rows[0].count, 10) > 0;
+
+    // Mode: unused - only delete if no transactions use it
+    if (mode === 'unused') {
+      if (transactionCount > 0) {
+        await client.end();
+        return { 
+          statusCode: 409, 
+          headers, 
+          body: JSON.stringify({ 
+            error: 'Category in use', 
+            transactionCount: transactionCount,
+            modeRequired: true 
+          }) 
+        };
+      }
+      // No transactions, proceed to delete (budget_templates will be handled below)
+    }
+
+    let affectedTransactions = 0;
+
+    // Mode: current-month - set current month's transactions to 'Uncategorized'
+    if (mode === 'current-month') {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+      const updateResult = await client.query(
+        `UPDATE transactions 
+         SET category = 'Uncategorized', updated_at = NOW()
+         WHERE category = $1 
+           AND tx_date >= $2 
+           AND tx_date <= $3`,
+        [category.name, startOfMonth.toISOString().split('T')[0], endOfMonth.toISOString().split('T')[0]]
+      );
+      affectedTransactions = updateResult.rowCount;
+    }
+
+    // Mode: all-months - set ALL transactions to 'Uncategorized'
+    if (mode === 'all-months') {
+      const updateResult = await client.query(
+        `UPDATE transactions 
+         SET category = 'Uncategorized', updated_at = NOW()
+         WHERE category = $1`,
+        [category.name]
+      );
+      affectedTransactions = updateResult.rowCount;
+    }
+
+    // Delete from budget_templates first (foreign key constraint)
+    await client.query(
+      'DELETE FROM budget_templates WHERE category_id = $1',
+      [id]
+    );
+
+    // Also clean up budget_snapshots (keep historical record but category is being deleted)
+    // Note: budget_snapshots has a foreign key to categories(id), so we need to handle it
+    // Options: 1) Delete snapshots, 2) Set category_id to null (if nullable), 3) Keep category
+    // Since the requirement is to delete the category, we'll delete related snapshots
+    await client.query(
+      'DELETE FROM budget_snapshots WHERE category_id = $1',
+      [id]
+    );
+
+    // Finally delete the category
+    const deleteResult = await client.query(
+      'DELETE FROM categories WHERE id = $1 RETURNING *',
+      [id]
+    );
 
     await client.end();
-
-    if (result.rowCount === 0) {
-      return { statusCode: 404, headers, body: JSON.stringify({ error: 'Category not found' }) };
-    }
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ success: true, deleted: result.rows[0] })
+      body: JSON.stringify({ 
+        success: true, 
+        deleted: { 
+          id: deleteResult.rows[0].id, 
+          name: deleteResult.rows[0].name 
+        },
+        affectedTransactions: affectedTransactions
+      })
     };
 
   } catch (error) {

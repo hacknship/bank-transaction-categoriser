@@ -265,7 +265,7 @@
     }
   }
 
-  async function processRow(row, idx, CATEGORIES, savedTransactions) {
+  async function processRow(row, idx, CATEGORIES, savedTransactions, accountId) {
     const cells = row.querySelectorAll('td');
     if (cells.length < 4) return;
 
@@ -280,10 +280,23 @@
     const date = parseDate(dateTxt);
     if (!date) return;
 
-    const raw = dateTxt + '|' + descTxt + '|' + amtTxt + '|' + (isNeg ? 'neg' : 'pos') + '|idx' + idx;
-    const txId = simpleHash(raw);
-
-    if (processedRows.has(txId)) return;
+    const amount = parseAmount(amtTxt, isNeg);
+    
+    // Generate stable ID using only stable fields (no row index)
+    const raw = accountId + '|' + date + '|' + descTxt + '|' + amount;
+    let txId = simpleHash(raw);
+    
+    // Handle edge case: same merchant, same amount, same day
+    // Add suffix counter if needed
+    if (processedRows.has(txId)) {
+      let counter = 1;
+      let newTxId = txId + '-' + counter;
+      while (processedRows.has(newTxId)) {
+        counter++;
+        newTxId = txId + '-' + counter;
+      }
+      txId = newTxId;
+    }
     processedRows.add(txId);
 
     row.setAttribute('data-mbt-id', txId);
@@ -378,7 +391,7 @@
     
     // Process all rows with cached data
     for (let i = 0; i < rows.length; i++) {
-      await processRow(rows[i], i, CATEGORIES, savedTransactions);
+      await processRow(rows[i], i, CATEGORIES, savedTransactions, accountId);
     }
     
     console.log('[MBT] Done processing');
@@ -460,6 +473,33 @@
   document.addEventListener('keydown', function(e) {
     if (dropdownOpen) return;
     
+    const isMod = e.metaKey || e.ctrlKey;
+    
+    // Pagination shortcuts
+    if (isMod) {
+      if (e.key === '.' || e.key === 'Period' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const nextBtn = document.querySelector('[class*="next_arrow"]') || 
+                        document.querySelector('.SavingAccountContainer---next_arrow---jbdUO');
+        if (nextBtn) {
+          nextBtn.click();
+          resetAndProcess();
+        }
+        return;
+      }
+      if (e.key === ',' || e.key === 'Comma' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const prevBtn = document.querySelector('[class*="back_arrow"]') || 
+                        document.querySelector('[class*="prev_arrow"]') ||
+                        document.querySelector('.SavingAccountContainer---back_arrow---FqLBL');
+        if (prevBtn) {
+          prevBtn.click();
+          resetAndProcess();
+        }
+        return;
+      }
+    }
+    
     const rows = document.querySelectorAll('tbody tr[data-mbt-id]');
     if (rows.length === 0) return;
     
@@ -475,10 +515,18 @@
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       if (kbCol > 0) { kbCol--; focusCell(kbRow, kbCol); }
-    } else if (e.key === 'Enter' && kbRow >= 0) {
+    } else if ((e.key === 'Enter' || e.key === ' ') && kbRow >= 0) {
+      e.preventDefault();
       const cells = rows[kbRow].querySelectorAll('.mbt-cell');
       const el = kbCol === 0 ? cells[0].querySelector('select') : cells[1].querySelector('input');
-      if (el) el.focus();
+      if (el) {
+        el.focus();
+        // For dropdowns, open by simulating mousedown
+        if (el.tagName === 'SELECT') {
+          const mousedown = new MouseEvent('mousedown', { bubbles: true });
+          el.dispatchEvent(mousedown);
+        }
+      }
     }
   });
 
