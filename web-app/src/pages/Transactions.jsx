@@ -1,11 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
-import { API } from '../utils/api';
-import { CachedAPI } from '../utils/cachedApi';
+import { useState, useMemo } from 'react';
+import { useTransactions, useCategories, useSaveTransaction, useDeleteTransaction } from '../hooks/useTransactions';
 
 function Transactions() {
-  const [transactions, setTransactions] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [accounts, setAccounts] = useState([]);
   const [filters, setFilters] = useState({
     account: '',
     category: '',
@@ -14,64 +10,38 @@ function Transactions() {
   const [editingId, setEditingId] = useState(null);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [jsonContent, setJsonContent] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isFetching, setIsFetching] = useState(false);
 
-  // Load data from cloud (with caching)
-  const loadData = useCallback(async (forceRefresh = false) => {
-    // Check for cached data
-    const cachedTx = !forceRefresh ? await CachedAPI.getTransactions() : null;
-    const cachedCat = !forceRefresh ? await CachedAPI.getCategories() : null;
-    
-    // If no cache, show loading
-    if (!cachedTx || !cachedCat) {
-      setIsLoading(true);
-    } else {
-      // Show cached data immediately
-      setTransactions(cachedTx.transactions || []);
-      setCategories(cachedCat.categories || []);
-      const uniqueAccounts = [...new Set((cachedTx.transactions || []).map(t => t.account_id).filter(Boolean))];
-      setAccounts(uniqueAccounts);
-      setIsFetching(true);
-    }
-    
-    try {
-      const [txData, catData] = await Promise.all([
-        CachedAPI.getTransactions({}, forceRefresh),
-        CachedAPI.getCategories(forceRefresh)
-      ]);
-      
-      setTransactions(txData.transactions || []);
-      setCategories(catData.categories || []);
-      
-      // Extract unique accounts
-      const uniqueAccounts = [...new Set((txData.transactions || []).map(t => t.account_id).filter(Boolean))];
-      setAccounts(uniqueAccounts);
-    } catch (error) {
-      console.error('Failed to load data:', error);
-    } finally {
-      setIsLoading(false);
-      setIsFetching(false);
-    }
-  }, []);
+  // TanStack Query hooks
+  const { 
+    data: transactions = [], 
+    isLoading,
+    isFetching,
+    refetch 
+  } = useTransactions();
+  
+  const { data: categories = [] } = useCategories();
+  const saveMutation = useSaveTransaction();
+  const deleteMutation = useDeleteTransaction();
 
-  // Load on mount
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  // Extract unique accounts
+  const accounts = useMemo(() => {
+    return [...new Set(transactions.map(t => t.account_id).filter(Boolean))];
+  }, [transactions]);
 
   // Filter transactions
-  const filteredTransactions = transactions.filter(tx => {
-    if (filters.account && tx.account_id !== filters.account) return false;
-    if (filters.category && tx.category !== filters.category) return false;
-    if (filters.search) {
-      const search = filters.search.toLowerCase();
-      const desc = (tx.description || '').toLowerCase();
-      const notes = (tx.notes || '').toLowerCase();
-      if (!desc.includes(search) && !notes.includes(search)) return false;
-    }
-    return true;
-  });
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(tx => {
+      if (filters.account && tx.account_id !== filters.account) return false;
+      if (filters.category && tx.category !== filters.category) return false;
+      if (filters.search) {
+        const search = filters.search.toLowerCase();
+        const desc = (tx.description || '').toLowerCase();
+        const notes = (tx.notes || '').toLowerCase();
+        if (!desc.includes(search) && !notes.includes(search)) return false;
+      }
+      return true;
+    });
+  }, [transactions, filters]);
 
   // Stats
   const totalCount = transactions.length;
@@ -81,7 +51,7 @@ function Transactions() {
 
   // Actions
   function handleRefresh() {
-    loadData(true); // force refresh
+    refetch();
   }
 
   function exportJSON() {
@@ -94,24 +64,19 @@ function Transactions() {
   }
 
   async function updateTransaction(id, updates) {
-    try {
-      const tx = transactions.find(t => t.tx_id === id);
-      if (!tx) return;
-      
-      await API.saveTransaction({
-        txId: id,
-        accountId: tx.account_id,
-        txDate: tx.tx_date,
-        description: tx.description,
-        amount: tx.amount,
-        category: updates.category !== undefined ? updates.category : tx.category,
-        notes: updates.notes !== undefined ? updates.notes : tx.notes
-      });
-      
-      loadData(); // Refresh
-    } catch (error) {
-      console.error('Failed to update:', error);
-    }
+    const tx = transactions.find(t => t.tx_id === id);
+    if (!tx) return;
+    
+    await saveMutation.mutateAsync({
+      txId: id,
+      accountId: tx.account_id,
+      txDate: tx.tx_date,
+      description: tx.description,
+      amount: tx.amount,
+      category: updates.category !== undefined ? updates.category : tx.category,
+      notes: updates.notes !== undefined ? updates.notes : tx.notes
+    });
+    
     setEditingId(null);
   }
 
@@ -120,13 +85,7 @@ function Transactions() {
       return;
     }
     
-    try {
-      await API.deleteTransaction(txId);
-      loadData(); // Refresh
-    } catch (error) {
-      console.error('Failed to delete:', error);
-      alert('Failed to delete transaction: ' + error.message);
-    }
+    await deleteMutation.mutateAsync(txId);
   }
 
   function getCategory(name) {

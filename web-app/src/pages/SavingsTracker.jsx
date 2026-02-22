@@ -1,11 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
-import { API } from '../utils/api';
+import { useState, useEffect, useMemo } from 'react';
+import { useBudget, useAvailablePeriods, useUpdateSnapshotBudget } from '../hooks/useBudget';
 
 function SavingsTracker() {
   const [period, setPeriod] = useState('');
-  const [availablePeriods, setAvailablePeriods] = useState([]);
-  const [budgetData, setBudgetData] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [editAmount, setEditAmount] = useState('');
 
@@ -16,38 +13,16 @@ function SavingsTracker() {
     setPeriod(currentPeriod);
   }, []);
 
-  // Load available periods
-  useEffect(() => {
-    loadAvailablePeriods();
-  }, []);
-
-  // Load budget when period changes
-  useEffect(() => {
-    if (period) {
-      loadBudgetForPeriod(period);
-    }
-  }, [period]);
-
-  const loadAvailablePeriods = async () => {
-    try {
-      const data = await API.getAvailablePeriods();
-      setAvailablePeriods(data.periods || []);
-    } catch (error) {
-      console.error('Failed to load periods:', error);
-    }
-  };
-
-  const loadBudgetForPeriod = async (selectedPeriod) => {
-    setLoading(true);
-    try {
-      const data = await API.getBudgetForPeriod(selectedPeriod, 'savings');
-      setBudgetData(data);
-    } catch (error) {
-      console.error('Failed to load budget:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // TanStack Query hooks
+  const { data: availablePeriods = [] } = useAvailablePeriods();
+  const { 
+    data: budgetData, 
+    isLoading, 
+    isFetching, 
+    refetch 
+  } = useBudget(period, 'savings');
+  
+  const updateSnapshotMutation = useUpdateSnapshotBudget();
 
   const handleEditClick = (category) => {
     setEditingCategory(category);
@@ -57,21 +32,15 @@ function SavingsTracker() {
   const handleSaveEdit = async () => {
     if (!editingCategory || !editAmount) return;
 
-    try {
-      await API.updateSnapshotBudget({
-        period,
-        categoryId: editingCategory.category_id,
-        newAmount: parseFloat(editAmount),
-        reason: 'Manual adjustment from tracker'
-      });
-      
-      await loadBudgetForPeriod(period);
-      setEditingCategory(null);
-      setEditAmount('');
-    } catch (error) {
-      console.error('Failed to update budget:', error);
-      alert('Failed to update budget: ' + error.message);
-    }
+    await updateSnapshotMutation.mutateAsync({
+      period,
+      categoryId: editingCategory.category_id,
+      newAmount: parseFloat(editAmount),
+      reason: 'Manual adjustment from tracker'
+    });
+    
+    setEditingCategory(null);
+    setEditAmount('');
   };
 
   const formatCurrency = (amount) => {
@@ -101,12 +70,25 @@ function SavingsTracker() {
           className="filter-input"
           value={period}
           onChange={(e) => setPeriod(e.target.value)}
-          disabled={loading}
+          disabled={isLoading}
         >
           {availablePeriods.map(p => (
             <option key={p.value} value={p.value}>{p.label}</option>
           ))}
         </select>
+
+        {/* Refresh Button */}
+        <button 
+          className="btn-small"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          style={{ 
+            marginLeft: 'auto',
+            opacity: isFetching ? 0.7 : 1
+          }}
+        >
+          {isFetching ? '🔄 Refreshing...' : '🔄 Refresh'}
+        </button>
 
         {isPastMonth() && (
           <span style={{ 
@@ -152,7 +134,7 @@ function SavingsTracker() {
 
       {/* Savings Categories Grid */}
       <div style={{ padding: '32px' }}>
-        {loading ? (
+        {isLoading ? (
           <div className="empty-state">
             <h2>Loading...</h2>
           </div>

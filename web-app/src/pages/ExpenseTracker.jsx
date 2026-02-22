@@ -1,13 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
-import { API } from '../utils/api';
-import { CachedAPI } from '../utils/cachedApi';
+import { useState, useEffect, useMemo } from 'react';
+import { useBudget, useAvailablePeriods, useUpdateSnapshotBudget } from '../hooks/useBudget';
 
 function ExpenseTracker() {
   const [period, setPeriod] = useState('');
-  const [availablePeriods, setAvailablePeriods] = useState([]);
-  const [budgetData, setBudgetData] = useState(null);
-  const [isLoading, setIsLoading] = useState(false); // First load only
-  const [isFetching, setIsFetching] = useState(false); // Background refresh
   const [editingCategory, setEditingCategory] = useState(null);
   const [editAmount, setEditAmount] = useState('');
 
@@ -18,59 +13,16 @@ function ExpenseTracker() {
     setPeriod(currentPeriod);
   }, []);
 
-  // Load available periods (cached)
-  useEffect(() => {
-    loadAvailablePeriods();
-  }, []);
-
-  // Load budget when period changes (cached)
-  useEffect(() => {
-    if (period) {
-      loadBudgetForPeriod(period);
-    }
-  }, [period]);
-
-  const loadAvailablePeriods = async () => {
-    try {
-      const data = await CachedAPI.getAvailablePeriods();
-      setAvailablePeriods(data.periods || []);
-    } catch (error) {
-      console.error('Failed to load periods:', error);
-    }
-  };
-
-  const loadBudgetForPeriod = async (selectedPeriod, forceRefresh = false) => {
-    // Check if we have cached data
-    const cachedData = forceRefresh ? null : await CachedAPI.getBudgetForPeriod(selectedPeriod, 'expense');
-    
-    // If no cache, show loading
-    if (!cachedData) {
-      setIsLoading(true);
-    } else {
-      // Show cached data immediately
-      setBudgetData(cachedData);
-      // Show subtle fetching indicator
-      setIsFetching(true);
-    }
-    
-    try {
-      // Always fetch fresh data (background refresh)
-      const data = await CachedAPI.getBudgetForPeriod(selectedPeriod, 'expense', forceRefresh);
-      setBudgetData(data);
-    } catch (error) {
-      console.error('Failed to load budget:', error);
-    } finally {
-      setIsLoading(false);
-      setIsFetching(false);
-    }
-  };
+  // TanStack Query hooks
+  const { data: availablePeriods = [] } = useAvailablePeriods();
+  const { 
+    data: budgetData, 
+    isLoading, 
+    isFetching, 
+    refetch 
+  } = useBudget(period, 'expense');
   
-  // Manual refresh handler
-  const handleRefresh = () => {
-    if (period) {
-      loadBudgetForPeriod(period, true);
-    }
-  };
+  const updateSnapshotMutation = useUpdateSnapshotBudget();
 
   const handleEditClick = (category) => {
     setEditingCategory(category);
@@ -80,21 +32,15 @@ function ExpenseTracker() {
   const handleSaveEdit = async () => {
     if (!editingCategory || !editAmount) return;
 
-    try {
-      await API.updateSnapshotBudget({
-        period,
-        categoryId: editingCategory.category_id,
-        newAmount: parseFloat(editAmount),
-        reason: 'Manual adjustment from tracker'
-      });
-      
-      await loadBudgetForPeriod(period);
-      setEditingCategory(null);
-      setEditAmount('');
-    } catch (error) {
-      console.error('Failed to update budget:', error);
-      alert('Failed to update budget: ' + error.message);
-    }
+    await updateSnapshotMutation.mutateAsync({
+      period,
+      categoryId: editingCategory.category_id,
+      newAmount: parseFloat(editAmount),
+      reason: 'Manual adjustment from tracker'
+    });
+    
+    setEditingCategory(null);
+    setEditAmount('');
   };
 
   const getProgressBarColor = (spent, budgeted) => {
@@ -118,7 +64,7 @@ function ExpenseTracker() {
   };
 
   // Group budgets by period type
-  const getBudgetsByPeriodType = () => {
+  const budgetsByType = useMemo(() => {
     if (!budgetData?.budgets) return {};
     
     const grouped = {};
@@ -130,13 +76,10 @@ function ExpenseTracker() {
       grouped[periodType].push(budget);
     });
     return grouped;
-  };
-
-  const budgetsByType = getBudgetsByPeriodType();
+  }, [budgetData]);
 
   // Calculate summary for a group of budgets
   const calculateSummary = (budgets) => {
-    // Use absolute values for spending since transactions are negative
     const totalBudgeted = budgets.reduce((sum, b) => sum + parseFloat(b.budgeted_amount || 0), 0);
     const totalSpent = budgets.reduce((sum, b) => sum + Math.abs(parseFloat(b.actual_spent || 0)), 0);
     return {
@@ -185,7 +128,7 @@ function ExpenseTracker() {
               className="filter-input"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
-              disabled={loading}
+              disabled={isLoading}
             >
               {availablePeriods.map(p => (
                 <option key={p.value} value={p.value}>{p.label}</option>
@@ -238,7 +181,6 @@ function ExpenseTracker() {
         }}>
           {budgets.map((category) => {
             const isEditing = editingCategory?.category_id === category.category_id;
-            // Use absolute value for spent since transactions are negative
             const spent = Math.abs(parseFloat(category.actual_spent || 0));
             const budgeted = parseFloat(category.budgeted_amount || 0);
             const remaining = budgeted - spent;
@@ -421,7 +363,7 @@ function ExpenseTracker() {
         {/* Refresh Button */}
         <button 
           className="btn-small"
-          onClick={handleRefresh}
+          onClick={() => refetch()}
           disabled={isFetching}
           style={{ 
             marginLeft: 'auto',
