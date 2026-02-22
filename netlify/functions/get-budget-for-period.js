@@ -61,6 +61,7 @@ exports.handler = async (event) => {
     }
 
     // Create snapshots for categories that don't have one for this period
+    // Get the category's period_type from budget_templates
     await client.query(`
       INSERT INTO budget_snapshots (
         period_type, period_start, period_end,
@@ -68,7 +69,7 @@ exports.handler = async (event) => {
         budgeted_amount, budget_version_id
       )
       SELECT 
-        'monthly',
+        COALESCE(bt.period_type, 'monthly'),
         $1::date,
         $2::date,
         c.id,
@@ -87,6 +88,7 @@ exports.handler = async (event) => {
     `, [periodStart, periodEndStr, versionId]);
 
     // Get all snapshots for this period with actual spending
+    // Use the snapshot's period_type (which is the category's period_type)
     let query = `
       SELECT 
         bs.id,
@@ -95,7 +97,7 @@ exports.handler = async (event) => {
         bs.category_icon,
         bs.category_type,
         bs.budgeted_amount,
-        bt.period_type,
+        bs.period_type,
         COALESCE(
           (SELECT SUM(t.amount)
            FROM transactions t
@@ -105,7 +107,6 @@ exports.handler = async (event) => {
           0
         ) as actual_spent
       FROM budget_snapshots bs
-      LEFT JOIN budget_templates bt ON bt.category_id = bs.category_id
       WHERE bs.period_start = $1
     `;
     const queryParams = [periodStart, periodEndStr];
@@ -115,7 +116,7 @@ exports.handler = async (event) => {
       queryParams.push(type);
     }
 
-    query += ` ORDER BY bs.category_type, bs.category_name`;
+    query += ` ORDER BY bs.period_type, bs.category_name`;
 
     const result = await client.query(query, queryParams);
     let budgets = result.rows;
@@ -132,7 +133,7 @@ exports.handler = async (event) => {
 
     // Calculate totals
     const totalBudgeted = budgets.reduce((sum, b) => sum + parseFloat(b.budgeted_amount || 0), 0);
-    const totalSpent = budgets.reduce((sum, b) => sum + parseFloat(b.actual_spent || 0), 0);
+    const totalSpent = budgets.reduce((sum, b) => sum + Math.abs(parseFloat(b.actual_spent || 0)), 0);
 
     await client.end();
 
