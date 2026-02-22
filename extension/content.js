@@ -471,58 +471,127 @@
 
   // Keyboard shortcuts
   document.addEventListener('keydown', function(e) {
-    if (dropdownOpen) return;
+    console.log('[MBT] Keydown:', e.key, 'Modifier:', e.metaKey || e.ctrlKey, 'Target:', e.target.tagName);
+    
+    // Always allow Escape to deactivate
+    if (e.key === 'Escape') {
+      console.log('[MBT] Escape pressed - deactivating');
+      clearHL();
+      if (document.activeElement) document.activeElement.blur();
+      kbRow = -1;
+      kbCol = 0;
+      return;
+    }
+    
+    // Don't process other keys if dropdown is open
+    if (dropdownOpen) {
+      console.log('[MBT] Dropdown open, ignoring key');
+      return;
+    }
+    
+    // Don't process if user is typing in an input/select
+    const activeTag = document.activeElement?.tagName;
+    if (activeTag === 'INPUT' || activeTag === 'SELECT' || activeTag === 'TEXTAREA') {
+      // Allow Escape and modifier keys even when in input
+      if (!e.metaKey && !e.ctrlKey) {
+        console.log('[MBT] In input field, ignoring key');
+        return;
+      }
+    }
     
     const isMod = e.metaKey || e.ctrlKey;
     
-    // Pagination shortcuts
+    // Pagination shortcuts (Cmd/Ctrl + . or ,)
     if (isMod) {
-      if (e.key === '.' || e.key === 'Period' || e.key === 'ArrowRight') {
+      if (e.key === '.' || e.key === 'Period') {
         e.preventDefault();
+        console.log('[MBT] Next page shortcut');
         const nextBtn = document.querySelector('[class*="next_arrow"]') || 
                         document.querySelector('.SavingAccountContainer---next_arrow---jbdUO');
         if (nextBtn) {
+          console.log('[MBT] Clicking next button');
           nextBtn.click();
           resetAndProcess();
+        } else {
+          console.log('[MBT] Next button not found');
         }
         return;
       }
-      if (e.key === ',' || e.key === 'Comma' || e.key === 'ArrowLeft') {
+      if (e.key === ',' || e.key === 'Comma') {
         e.preventDefault();
+        console.log('[MBT] Prev page shortcut');
         const prevBtn = document.querySelector('[class*="back_arrow"]') || 
                         document.querySelector('[class*="prev_arrow"]') ||
                         document.querySelector('.SavingAccountContainer---back_arrow---FqLBL');
         if (prevBtn) {
+          console.log('[MBT] Clicking prev button');
           prevBtn.click();
           resetAndProcess();
+        } else {
+          console.log('[MBT] Prev button not found');
         }
         return;
       }
     }
     
     const rows = document.querySelectorAll('tbody tr[data-mbt-id]');
-    if (rows.length === 0) return;
+    console.log('[MBT] Navigation rows found:', rows.length, 'Current kbRow:', kbRow);
+    
+    if (rows.length === 0) {
+      console.log('[MBT] No rows with data-mbt-id found');
+      return;
+    }
+    
+    // Initialize keyboard navigation if not started
+    if (kbRow === -1) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+        console.log('[MBT] Initializing keyboard nav at row 0');
+        kbRow = 0;
+        kbCol = 0;
+        focusCell(kbRow, kbCol);
+        e.preventDefault();
+        return;
+      }
+    }
     
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (kbRow < rows.length - 1) { kbRow++; focusCell(kbRow, kbCol); }
+      if (kbRow < rows.length - 1) { 
+        kbRow++; 
+        console.log('[MBT] ArrowDown to row', kbRow);
+        focusCell(kbRow, kbCol); 
+      }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (kbRow > 0) { kbRow--; focusCell(kbRow, kbCol); }
+      if (kbRow > 0) { 
+        kbRow--; 
+        console.log('[MBT] ArrowUp to row', kbRow);
+        focusCell(kbRow, kbCol); 
+      }
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      if (kbCol < 1) { kbCol++; focusCell(kbRow, kbCol); }
+      if (kbCol < 1) { 
+        kbCol++; 
+        console.log('[MBT] ArrowRight to col', kbCol);
+        focusCell(kbRow, kbCol); 
+      }
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      if (kbCol > 0) { kbCol--; focusCell(kbRow, kbCol); }
-    } else if ((e.key === 'Enter' || e.key === ' ') && kbRow >= 0) {
+      if (kbCol > 0) { 
+        kbCol--; 
+        console.log('[MBT] ArrowLeft to col', kbCol);
+        focusCell(kbRow, kbCol); 
+      }
+    } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
+      console.log('[MBT] Enter/Space on row', kbRow, 'col', kbCol);
       const cells = rows[kbRow].querySelectorAll('.mbt-cell');
-      const el = kbCol === 0 ? cells[0].querySelector('select') : cells[1].querySelector('input');
+      const el = kbCol === 0 ? cells[0]?.querySelector('select') : cells[1]?.querySelector('input');
       if (el) {
         el.focus();
         // For dropdowns, open by simulating mousedown
         if (el.tagName === 'SELECT') {
+          console.log('[MBT] Opening dropdown');
           const mousedown = new MouseEvent('mousedown', { bubbles: true });
           el.dispatchEvent(mousedown);
         }
