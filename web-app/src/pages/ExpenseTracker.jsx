@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useBudget, useAvailablePeriods, useUpdateSnapshotBudget } from '../hooks/useBudget';
 import { queryClient } from '../lib/queryClient';
-import API from '../utils/api';
+import { API } from '../utils/api';
 
 function ExpenseTracker() {
   const [period, setPeriod] = useState('');
