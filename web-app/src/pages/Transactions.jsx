@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { API } from '../utils/api';
+import { CachedAPI } from '../utils/cachedApi';
 
 function Transactions() {
   const [transactions, setTransactions] = useState([]);
@@ -13,15 +14,31 @@ function Transactions() {
   const [editingId, setEditingId] = useState(null);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [jsonContent, setJsonContent] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
 
-  // Load data from cloud
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  // Load data from cloud (with caching)
+  const loadData = useCallback(async (forceRefresh = false) => {
+    // Check for cached data
+    const cachedTx = !forceRefresh ? await CachedAPI.getTransactions() : null;
+    const cachedCat = !forceRefresh ? await CachedAPI.getCategories() : null;
+    
+    // If no cache, show loading
+    if (!cachedTx || !cachedCat) {
+      setIsLoading(true);
+    } else {
+      // Show cached data immediately
+      setTransactions(cachedTx.transactions || []);
+      setCategories(cachedCat.categories || []);
+      const uniqueAccounts = [...new Set((cachedTx.transactions || []).map(t => t.account_id).filter(Boolean))];
+      setAccounts(uniqueAccounts);
+      setIsFetching(true);
+    }
+    
     try {
       const [txData, catData] = await Promise.all([
-        API.getTransactions(),
-        API.getCategories()
+        CachedAPI.getTransactions({}, forceRefresh),
+        CachedAPI.getCategories(forceRefresh)
       ]);
       
       setTransactions(txData.transactions || []);
@@ -33,11 +50,12 @@ function Transactions() {
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
+      setIsFetching(false);
     }
   }, []);
 
-  // Load on mount and when filters change
+  // Load on mount
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -63,7 +81,7 @@ function Transactions() {
 
   // Actions
   function handleRefresh() {
-    loadData();
+    loadData(true); // force refresh
   }
 
   function exportJSON() {
@@ -147,8 +165,8 @@ function Transactions() {
 
       {/* Actions */}
       <div className="actions">
-        <button className="btn btn-yellow" onClick={handleRefresh} disabled={loading}>
-          {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
+        <button className="btn btn-yellow" onClick={handleRefresh} disabled={isFetching}>
+          {isFetching ? '🔄 Refreshing...' : '🔄 Refresh Data'}
         </button>
         <button className="btn btn-black" onClick={exportJSON}>📥 Export JSON</button>
       </div>
@@ -191,7 +209,11 @@ function Transactions() {
 
       {/* Table */}
       <div className="table-container">
-        {filteredTransactions.length === 0 ? (
+        {isLoading ? (
+          <div className="empty-state">
+            <h2>Loading...</h2>
+          </div>
+        ) : filteredTransactions.length === 0 ? (
           <div className="empty-state">
             <h2>No Transactions Yet</h2>
             <p>Go to your Maybank account page and categorize some transactions using the Chrome extension. They will appear here automatically.</p>

@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { API } from '../utils/api';
+import { CachedAPI } from '../utils/cachedApi';
 
 function ExpenseTracker() {
   const [period, setPeriod] = useState('');
   const [availablePeriods, setAvailablePeriods] = useState([]);
   const [budgetData, setBudgetData] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // First load only
+  const [isFetching, setIsFetching] = useState(false); // Background refresh
   const [editingCategory, setEditingCategory] = useState(null);
   const [editAmount, setEditAmount] = useState('');
 
@@ -16,12 +18,12 @@ function ExpenseTracker() {
     setPeriod(currentPeriod);
   }, []);
 
-  // Load available periods
+  // Load available periods (cached)
   useEffect(() => {
     loadAvailablePeriods();
   }, []);
 
-  // Load budget when period changes
+  // Load budget when period changes (cached)
   useEffect(() => {
     if (period) {
       loadBudgetForPeriod(period);
@@ -30,22 +32,43 @@ function ExpenseTracker() {
 
   const loadAvailablePeriods = async () => {
     try {
-      const data = await API.getAvailablePeriods();
+      const data = await CachedAPI.getAvailablePeriods();
       setAvailablePeriods(data.periods || []);
     } catch (error) {
       console.error('Failed to load periods:', error);
     }
   };
 
-  const loadBudgetForPeriod = async (selectedPeriod) => {
-    setLoading(true);
+  const loadBudgetForPeriod = async (selectedPeriod, forceRefresh = false) => {
+    // Check if we have cached data
+    const cachedData = forceRefresh ? null : await CachedAPI.getBudgetForPeriod(selectedPeriod, 'expense');
+    
+    // If no cache, show loading
+    if (!cachedData) {
+      setIsLoading(true);
+    } else {
+      // Show cached data immediately
+      setBudgetData(cachedData);
+      // Show subtle fetching indicator
+      setIsFetching(true);
+    }
+    
     try {
-      const data = await API.getBudgetForPeriod(selectedPeriod, 'expense');
+      // Always fetch fresh data (background refresh)
+      const data = await CachedAPI.getBudgetForPeriod(selectedPeriod, 'expense', forceRefresh);
       setBudgetData(data);
     } catch (error) {
       console.error('Failed to load budget:', error);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
+      setIsFetching(false);
+    }
+  };
+  
+  // Manual refresh handler
+  const handleRefresh = () => {
+    if (period) {
+      loadBudgetForPeriod(period, true);
     }
   };
 
@@ -388,12 +411,25 @@ function ExpenseTracker() {
           className="filter-input"
           value={period}
           onChange={(e) => setPeriod(e.target.value)}
-          disabled={loading}
+          disabled={isLoading}
         >
           {availablePeriods.map(p => (
             <option key={p.value} value={p.value}>{p.label}</option>
           ))}
         </select>
+
+        {/* Refresh Button */}
+        <button 
+          className="btn-small"
+          onClick={handleRefresh}
+          disabled={isFetching}
+          style={{ 
+            marginLeft: 'auto',
+            opacity: isFetching ? 0.7 : 1
+          }}
+        >
+          {isFetching ? '🔄 Refreshing...' : '🔄 Refresh'}
+        </button>
 
         {isPastMonth() && (
           <span style={{ 
@@ -411,7 +447,7 @@ function ExpenseTracker() {
 
       {/* Budget Sections */}
       <div style={{ padding: '32px' }}>
-        {loading ? (
+        {isLoading ? (
           <div className="empty-state">
             <h2>Loading...</h2>
           </div>
