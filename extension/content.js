@@ -14,6 +14,7 @@
   let kbCol = 0;
   let dropdownOpen = false;
   let isProcessing = false;
+  let selectElementOpen = null; // Track which select is currently open
 
   // Fetch categories from Ghost DB (fresh every time)
   async function fetchCategories() {
@@ -396,6 +397,16 @@
     
     console.log('[MBT] Done processing');
     isProcessing = false;
+    
+    // Auto-scroll to first row if table was just added and not in an input
+    const activeEl = document.activeElement;
+    if (kbRow === -1 && (!activeEl || activeEl.tagName === 'BODY')) {
+      console.log('[MBT] Auto-scrolling to table');
+      const firstRow = rows[0];
+      if (firstRow) {
+        firstRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
   }
 
   function resetAndProcess() {
@@ -469,133 +480,223 @@
     if (isNext || isBack) resetAndProcess();
   });
 
-  // Keyboard shortcuts
+  // ===== KEYBOARD NAVIGATION SYSTEM =====
+  
+  // Track if we're in "keyboard nav mode" vs just typing
+  let keyboardNavActive = false;
+  
+  // Helper: Get all MBT rows
+  function getRows() {
+    return document.querySelectorAll('tbody tr[data-mbt-id]');
+  }
+  
+  // Helper: Get cell element at position
+  function getCell(rowIdx, colIdx) {
+    const rows = getRows();
+    if (rowIdx < 0 || rowIdx >= rows.length) return null;
+    const cells = rows[rowIdx].querySelectorAll('.mbt-cell');
+    if (colIdx < 0 || colIdx >= cells.length) return null;
+    return colIdx === 0 ? cells[colIdx]?.querySelector('select') : cells[colIdx]?.querySelector('input');
+  }
+  
+  // Helper: Save current row and move to next
+  async function saveAndMoveNext() {
+    const rows = getRows();
+    if (kbRow >= 0 && kbRow < rows.length) {
+      await saveRow(rows[kbRow]);
+      // Move to next row, same column
+      if (kbRow < rows.length - 1) {
+        kbRow++;
+        focusCell(kbRow, kbCol);
+      }
+    }
+  }
+  
+  // Main keyboard handler
   document.addEventListener('keydown', function(e) {
-    console.log('[MBT] Keydown:', e.key, 'Modifier:', e.metaKey || e.ctrlKey, 'Target:', e.target.tagName);
+    const rows = getRows();
+    const activeEl = document.activeElement;
+    const isSelect = activeEl?.tagName === 'SELECT';
+    const isInput = activeEl?.tagName === 'INPUT';
+    const isInMBT = activeEl?.closest?.('tr[data-mbt-id]') !== null;
     
-    // Always allow Escape to deactivate
+    console.log('[MBT] Key:', e.key, 'Target:', activeEl?.tagName, 'isSelect:', isSelect, 'kbRow:', kbRow);
+    
+    // ESCAPE: Always clear focus and exit nav mode
     if (e.key === 'Escape') {
-      console.log('[MBT] Escape pressed - deactivating');
-      clearHL();
-      if (document.activeElement) document.activeElement.blur();
+      e.preventDefault();
+      keyboardNavActive = false;
       kbRow = -1;
       kbCol = 0;
+      clearHL();
+      if (activeEl) activeEl.blur();
+      selectElementOpen = null;
       return;
     }
     
-    // Don't process other keys if dropdown is open
-    if (dropdownOpen) {
-      console.log('[MBT] Dropdown open, ignoring key');
+    // PAGINATION: Cmd/Ctrl + . or ,
+    if ((e.metaKey || e.ctrlKey) && (e.key === '.' || e.key === ',')) {
+      e.preventDefault();
+      const isNext = e.key === '.';
+      const btn = isNext 
+        ? (document.querySelector('[class*="next_arrow"]') || document.querySelector('.SavingAccountContainer---next_arrow---jbdUO'))
+        : (document.querySelector('[class*="back_arrow"]') || document.querySelector('[class*="prev_arrow"]') || document.querySelector('.SavingAccountContainer---back_arrow---FqLBL'));
+      if (btn) {
+        btn.click();
+        resetAndProcess();
+      }
       return;
     }
     
-    // Don't process if user is typing in an input/select
-    const activeTag = document.activeElement?.tagName;
-    if (activeTag === 'INPUT' || activeTag === 'SELECT' || activeTag === 'TEXTAREA') {
-      // Allow Escape and modifier keys even when in input
-      if (!e.metaKey && !e.ctrlKey) {
-        console.log('[MBT] In input field, ignoring key');
+    // No rows? Nothing to navigate
+    if (rows.length === 0) return;
+    
+    // If we're in a select dropdown that's open, handle dropdown navigation
+    if (isSelect && selectElementOpen === activeEl) {
+      // In dropdown, Up/Down navigate options natively
+      // Enter selects and closes
+      if (e.key === 'Enter') {
+        // Selection made, close dropdown, save, move to next
+        selectElementOpen = null;
+        keyboardNavActive = true;
+        saveAndMoveNext();
         return;
       }
-    }
-    
-    const isMod = e.metaKey || e.ctrlKey;
-    
-    // Pagination shortcuts (Cmd/Ctrl + . or ,)
-    if (isMod) {
-      if (e.key === '.' || e.key === 'Period') {
+      // Tab or ArrowRight moves to notes field
+      if (e.key === 'Tab' || e.key === 'ArrowRight') {
         e.preventDefault();
-        console.log('[MBT] Next page shortcut');
-        const nextBtn = document.querySelector('[class*="next_arrow"]') || 
-                        document.querySelector('.SavingAccountContainer---next_arrow---jbdUO');
-        if (nextBtn) {
-          console.log('[MBT] Clicking next button');
-          nextBtn.click();
-          resetAndProcess();
-        } else {
-          console.log('[MBT] Next button not found');
-        }
+        selectElementOpen = null;
+        kbCol = 1;
+        focusCell(kbRow, kbCol);
         return;
       }
-      if (e.key === ',' || e.key === 'Comma') {
-        e.preventDefault();
-        console.log('[MBT] Prev page shortcut');
-        const prevBtn = document.querySelector('[class*="back_arrow"]') || 
-                        document.querySelector('[class*="prev_arrow"]') ||
-                        document.querySelector('.SavingAccountContainer---back_arrow---FqLBL');
-        if (prevBtn) {
-          console.log('[MBT] Clicking prev button');
-          prevBtn.click();
-          resetAndProcess();
-        } else {
-          console.log('[MBT] Prev button not found');
-        }
-        return;
-      }
-    }
-    
-    const rows = document.querySelectorAll('tbody tr[data-mbt-id]');
-    console.log('[MBT] Navigation rows found:', rows.length, 'Current kbRow:', kbRow);
-    
-    if (rows.length === 0) {
-      console.log('[MBT] No rows with data-mbt-id found');
+      // Let other keys work in dropdown (Up/Down to select)
       return;
     }
     
-    // Initialize keyboard navigation if not started
-    if (kbRow === -1) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
-        console.log('[MBT] Initializing keyboard nav at row 0');
+    // If we're typing in input field, only handle special keys
+    if (isInput && isInMBT) {
+      // Tab moves to next row's category
+      if (e.key === 'Tab' && !e.shiftKey) {
+        e.preventDefault();
+        saveAndMoveNext();
+        return;
+      }
+      // Enter saves and moves to next row
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveAndMoveNext();
+        return;
+      }
+      // Arrow keys navigate if keyboardNavActive
+      if (keyboardNavActive) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (kbRow < rows.length - 1) { kbRow++; focusCell(kbRow, kbCol); }
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (kbRow > 0) { kbRow--; focusCell(kbRow, kbCol); }
+          return;
+        }
+        if (e.key === 'ArrowLeft' && kbCol > 0) {
+          e.preventDefault();
+          kbCol--;
+          focusCell(kbRow, kbCol);
+          return;
+        }
+      }
+      // Otherwise let them type
+      return;
+    }
+    
+    // NAVIGATION KEYS (work everywhere except when typing in non-MBT inputs)
+    
+    // ArrowDown - Start nav or move down
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      keyboardNavActive = true;
+      if (kbRow === -1) {
+        kbRow = 0;
+        kbCol = 0;
+      } else if (kbRow < rows.length - 1) {
+        kbRow++;
+      }
+      focusCell(kbRow, kbCol);
+      return;
+    }
+    
+    // ArrowUp - Move up
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      keyboardNavActive = true;
+      if (kbRow > 0) {
+        kbRow--;
+        focusCell(kbRow, kbCol);
+      }
+      return;
+    }
+    
+    // ArrowLeft/Right - Switch columns
+    if (e.key === 'ArrowLeft' && kbCol > 0) {
+      e.preventDefault();
+      keyboardNavActive = true;
+      kbCol--;
+      focusCell(kbRow, kbCol);
+      return;
+    }
+    
+    if (e.key === 'ArrowRight' && kbCol < 1) {
+      e.preventDefault();
+      keyboardNavActive = true;
+      kbCol++;
+      focusCell(kbRow, kbCol);
+      return;
+    }
+    
+    // ENTER - Activate current cell
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      keyboardNavActive = true;
+      
+      if (kbRow === -1) {
+        // Start navigation
         kbRow = 0;
         kbCol = 0;
         focusCell(kbRow, kbCol);
-        e.preventDefault();
         return;
       }
+      
+      const cell = getCell(kbRow, kbCol);
+      if (!cell) return;
+      
+      cell.focus();
+      
+      if (kbCol === 0) {
+        // Category column - open dropdown
+        selectElementOpen = cell;
+        cell.click(); // Try native click first
+        // Also dispatch mousedown for custom dropdowns
+        setTimeout(() => {
+          const event = new MouseEvent('mousedown', { bubbles: true });
+          cell.dispatchEvent(event);
+        }, 10);
+      } else {
+        // Notes column - just focus, let them type
+        // Cursor goes to end
+        const val = cell.value;
+        cell.setSelectionRange(val.length, val.length);
+      }
+      return;
     }
-    
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (kbRow < rows.length - 1) { 
-        kbRow++; 
-        console.log('[MBT] ArrowDown to row', kbRow);
-        focusCell(kbRow, kbCol); 
-      }
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (kbRow > 0) { 
-        kbRow--; 
-        console.log('[MBT] ArrowUp to row', kbRow);
-        focusCell(kbRow, kbCol); 
-      }
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      if (kbCol < 1) { 
-        kbCol++; 
-        console.log('[MBT] ArrowRight to col', kbCol);
-        focusCell(kbRow, kbCol); 
-      }
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      if (kbCol > 0) { 
-        kbCol--; 
-        console.log('[MBT] ArrowLeft to col', kbCol);
-        focusCell(kbRow, kbCol); 
-      }
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      console.log('[MBT] Enter/Space on row', kbRow, 'col', kbCol);
-      const cells = rows[kbRow].querySelectorAll('.mbt-cell');
-      const el = kbCol === 0 ? cells[0]?.querySelector('select') : cells[1]?.querySelector('input');
-      if (el) {
-        el.focus();
-        // For dropdowns, open by simulating mousedown
-        if (el.tagName === 'SELECT') {
-          console.log('[MBT] Opening dropdown');
-          const mousedown = new MouseEvent('mousedown', { bubbles: true });
-          el.dispatchEvent(mousedown);
-        }
-      }
+  });
+  
+  // Track when select dropdown closes
+  document.addEventListener('click', function(e) {
+    if (selectElementOpen && e.target !== selectElementOpen) {
+      // Clicked outside the select, dropdown closed
+      selectElementOpen = null;
     }
   });
 
