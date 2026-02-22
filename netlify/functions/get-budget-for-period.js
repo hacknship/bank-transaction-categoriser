@@ -32,24 +32,95 @@ exports.handler = async (event) => {
 
     // Parse period (e.g., "2025-03" -> "2025-03-01")
     const periodStart = `${period}-01`;
-    const periodType = 'monthly';
+    const periodEnd = new Date(periodStart);
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+    periodEnd.setDate(periodEnd.getDate() - 1);
+    const periodEndStr = periodEnd.toISOString().split('T')[0];
 
-    // Get or create budget snapshot for this period
-    const result = await client.query(
-      'SELECT * FROM get_or_create_budget_snapshot($1, $2)',
-      [periodStart, periodType]
-    );
+    // Ensure budget snapshots exist for all categories
+    // First, get or create the budget version
+    let versionResult = await client.query(`
+      SELECT id FROM budget_versions 
+      WHERE effective_from <= $1 
+      AND (effective_to IS NULL OR effective_to >= $1)
+      ORDER BY effective_from DESC 
+      LIMIT 1
+    `, [periodStart]);
 
-    // Filter by type if specified
-    let budgets = result.rows;
-    if (type) {
-      budgets = budgets.filter(b => b.category_type === type);
+    let versionId;
+    if (versionResult.rows.length === 0) {
+      // Create initial version
+      const newVersion = await client.query(`
+        INSERT INTO budget_versions (name, effective_from, effective_to)
+        VALUES ($1, $2, NULL)
+        RETURNING id
+      `, ['Initial Budget', periodStart]);
+      versionId = newVersion.rows[0].id;
+    } else {
+      versionId = versionResult.rows[0].id;
     }
+
+    // Create snapshots for categories that don't have one for this period
+    await client.query(`
+      INSERT INTO budget_snapshots (
+        period_type, period_start, period_end,
+        category_id, category_name, category_icon, category_type,
+        budgeted_amount, budget_version_id
+      )
+      SELECT 
+        'monthly',
+        $1::date,
+        $2::date,
+        c.id,
+        c.name,
+        c.icon,
+        c.type,
+        COALESCE(bt.amount, 0),
+        $3
+      FROM categories c
+      LEFT JOIN budget_templates bt ON bt.category_id = c.id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM budget_snapshots bs
+        WHERE bs.period_start = $1::date
+        AND bs.category_id = c.id
+      )
+    `, [periodStart, periodEndStr, versionId]);
+
+    // Get all snapshots for this period with actual spending
+    let query = `
+      SELECT 
+        bs.id,
+        bs.category_id,
+        bs.category_name,
+        bs.category_icon,
+        bs.category_type,
+        bs.budgeted_amount,
+        COALESCE(
+          (SELECT SUM(t.amount)
+           FROM transactions t
+           WHERE t.category = bs.category_name
+           AND t.tx_date >= $1
+           AND t.tx_date <= $2),
+          0
+        ) as actual_spent
+      FROM budget_snapshots bs
+      WHERE bs.period_start = $1
+    `;
+    const queryParams = [periodStart, periodEndStr];
+
+    if (type) {
+      query += ` AND bs.category_type = $3`;
+      queryParams.push(type);
+    }
+
+    query += ` ORDER BY bs.category_type, bs.category_name`;
+
+    const result = await client.query(query, queryParams);
+    let budgets = result.rows;
 
     // Filter to only show tracker-enabled items (for current/future months)
     const today = new Date().toISOString().slice(0, 7); // YYYY-MM
     if (period >= today) {
-      // For current/future, only show templates marked for tracker
       const templateResult = await client.query(
         'SELECT category_id FROM budget_templates WHERE show_in_tracker = TRUE'
       );
@@ -68,7 +139,7 @@ exports.handler = async (event) => {
       headers,
       body: JSON.stringify({
         period,
-        periodType,
+        periodType: 'monthly',
         budgets,
         summary: {
           totalBudgeted,
@@ -80,11 +151,16 @@ exports.handler = async (event) => {
     };
 
   } catch (error) {
+    console.error('Function error:', error);
     await client.end();
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message })
+      body: JSON.stringify({ 
+        error: error.message,
+        detail: error.detail,
+        hint: error.hint
+      })
     };
   }
 };
