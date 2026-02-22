@@ -9,12 +9,14 @@
   const API_BASE = 'https://ss-transactions-tracker.netlify.app/.netlify/functions';
   
   let categoriesCache = null;
+  let transactionsCache = null;
   let processedRows = new Set();
   let kbRow = -1;
   let kbCol = 0;
   let dropdownOpen = false;
+  let isProcessing = false;
 
-  // Fetch categories from Ghost DB
+  // Fetch categories from Ghost DB (once per page)
   async function fetchCategories() {
     if (categoriesCache) return categoriesCache;
     
@@ -27,8 +29,32 @@
       return categoriesCache;
     } catch (e) {
       console.error('[MBT] Failed to fetch categories:', e);
-      // Return empty array - no defaults
       return [];
+    }
+  }
+
+  // Fetch saved transactions from Ghost DB
+  async function fetchTransactions(accountId) {
+    if (transactionsCache) return transactionsCache;
+    
+    try {
+      const url = `${API_BASE}/get-transactions?accountId=${encodeURIComponent(accountId)}&limit=500`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch transactions');
+      const data = await res.json();
+      
+      // Create a map of tx_id -> transaction for quick lookup
+      const txMap = {};
+      (data.transactions || []).forEach(tx => {
+        txMap[tx.tx_id] = tx;
+      });
+      
+      transactionsCache = txMap;
+      console.log('[MBT] Loaded', Object.keys(txMap).length, 'saved transactions');
+      return txMap;
+    } catch (e) {
+      console.error('[MBT] Failed to fetch transactions:', e);
+      return {};
     }
   }
 
@@ -61,7 +87,7 @@
     return null;
   }
 
-  // Save transaction to Ghost DB ONLY
+  // Save transaction to Ghost DB
   async function saveTx(txId, data) {
     try {
       const res = await fetch(`${API_BASE}/save-transaction`, {
@@ -79,6 +105,15 @@
       });
       
       if (res.ok) {
+        // Update cache
+        if (transactionsCache) {
+          transactionsCache[txId] = {
+            ...transactionsCache[txId],
+            category: data.category,
+            notes: data.notes,
+            tx_id: txId
+          };
+        }
         console.log('[MBT] Saved to Ghost DB:', txId);
         return true;
       } else {
@@ -91,39 +126,44 @@
     }
   }
 
-  // NO localStorage - empty function
-  function loadTx(txId) {
-    return null; // Always return null - fetch from cloud instead
-  }
-
+  // Show skeleton loading for all rows at once
   function showSkeleton() {
     const tbody = document.querySelector('table[class*="AccountTable"] tbody');
     if (!tbody) return;
-    const rows = tbody.querySelectorAll('tr');
     
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (row.querySelector('.mbt-skeleton')) continue;
-      
-      const skStyle = 'background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:mbtsk 1.5s infinite;';
+    const rows = tbody.querySelectorAll('tr');
+    if (rows.length === 0) return;
+    
+    // Add skeleton style if not present
+    if (!document.getElementById('mbtsk')) {
+      const s = document.createElement('style');
+      s.id = 'mbtsk';
+      s.textContent = `
+        @keyframes mbtsk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+        .mbt-skeleton-cell { 
+          background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+          background-size: 200% 100%;
+          animation: mbtsk 1.5s infinite;
+        }
+      `;
+      document.head.appendChild(s);
+    }
+    
+    // Add skeleton cells to each row
+    rows.forEach(row => {
+      if (row.querySelector('.mbt-skeleton')) return;
       
       [0,1,2].forEach(function(idx) {
         const cell = document.createElement('td');
         cell.className = 'mbt-cell mbt-skeleton';
         cell.style.cssText = 'padding:8px;' + (idx === 2 ? 'text-align:center;' : '');
         const div = document.createElement('div');
-        div.style.cssText = skStyle + 'height:32px;border-radius:4px;width:' + (idx === 2 ? '32px;margin:0 auto;' : '100%;');
+        div.style.cssText = 'height:36px;border-radius:4px;width:' + (idx === 2 ? '32px;margin:0 auto;' : '100%;') + 'background:#e0e0e0;';
+        div.className = 'mbt-skeleton-cell';
         cell.appendChild(div);
         row.appendChild(cell);
       });
-    }
-    
-    if (!document.getElementById('mbtsk')) {
-      const s = document.createElement('style');
-      s.id = 'mbtsk';
-      s.textContent = '@keyframes mbtsk{0%{background-position:200% 0}100%{background-position:-200% 0}}';
-      document.head.appendChild(s);
-    }
+    });
   }
 
   function removeSkeleton() {
@@ -239,7 +279,7 @@
     }
   }
 
-  async function processRow(row, idx) {
+  async function processRow(row, idx, CATEGORIES, savedTransactions) {
     const cells = row.querySelectorAll('td');
     if (cells.length < 4) return;
 
@@ -263,7 +303,10 @@
     row.setAttribute('data-mbt-id', txId);
     row.querySelectorAll('.mbt-cell').forEach(function(el) { el.remove(); });
 
-    const CATEGORIES = await fetchCategories();
+    // Check for saved data
+    const savedTx = savedTransactions[txId];
+    const savedCategory = savedTx ? savedTx.category : '';
+    const savedNotes = savedTx ? savedTx.notes : '';
 
     const cat = document.createElement('td');
     cat.className = 'mbt-cell';
@@ -274,8 +317,12 @@
     if (CATEGORIES.length === 0) {
       sel.innerHTML = '<option value="">No categories - check API</option>';
     } else {
-      sel.innerHTML = '<option value="">-- Select --</option>' + 
-        CATEGORIES.map(function(c) { return '<option value="' + c + '">' + c + '</option>'; }).join('');
+      let optionsHtml = '<option value="">-- Select --</option>';
+      CATEGORIES.forEach(function(c) {
+        const selected = (c === savedCategory) ? ' selected' : '';
+        optionsHtml += '<option value="' + c + '"' + selected + '>' + c + '</option>';
+      });
+      sel.innerHTML = optionsHtml;
     }
     cat.appendChild(sel);
 
@@ -286,11 +333,16 @@
     inp.type = 'text';
     inp.style.cssText = 'width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;';
     inp.placeholder = 'Notes...';
+    inp.value = savedNotes || '';
     note.appendChild(inp);
 
     const status = document.createElement('td');
     status.className = 'mbt-cell';
     status.style.cssText = 'padding:8px;text-align:center;';
+    // Show checkmark if data was loaded from DB
+    if (savedCategory || savedNotes) {
+      status.innerHTML = '<span style="color:#28a745;font-weight:bold;">✓</span>';
+    }
 
     row.appendChild(cat);
     row.appendChild(note);
@@ -302,14 +354,18 @@
     inp.addEventListener('blur', function() { saveRow(row); });
   }
 
-  function process() {
+  async function process() {
+    if (isProcessing) return;
+    isProcessing = true;
+    
     console.log('[MBT] Processing...');
     const table = document.querySelector('table[class*="AccountTable"]');
-    if (!table) { console.log('[MBT] No table'); return; }
+    if (!table) { console.log('[MBT] No table'); isProcessing = false; return; }
 
     const tbody = table.querySelector('tbody');
-    if (!tbody) { console.log('[MBT] No tbody'); return; }
+    if (!tbody) { console.log('[MBT] No tbody'); isProcessing = false; return; }
 
+    // Add headers if not present
     const thead = table.querySelector('thead tr');
     if (thead && !thead.querySelector('.mbt-header')) {
       ['CATEGORY','NOTES',''].forEach(function(t,i) {
@@ -325,19 +381,33 @@
     const rows = tbody.querySelectorAll('tr');
     console.log('[MBT] Found', rows.length, 'rows');
     
-    Promise.all(Array.from(rows).map((row, i) => processRow(row, i))).then(() => {
-      console.log('[MBT] Done processing');
-    });
+    // Fetch data ONCE before processing all rows
+    const accountInfo = extractAccountInfo();
+    const accountId = accountInfo ? accountInfo.accountId : 'unknown';
+    
+    const [CATEGORIES, savedTransactions] = await Promise.all([
+      fetchCategories(),
+      fetchTransactions(accountId)
+    ]);
+    
+    // Process all rows with cached data
+    for (let i = 0; i < rows.length; i++) {
+      await processRow(rows[i], i, CATEGORIES, savedTransactions);
+    }
+    
+    console.log('[MBT] Done processing');
+    isProcessing = false;
   }
 
   function resetAndProcess() {
     processedRows.clear();
+    transactionsCache = null;
     kbRow = -1; kbCol = 0;
     clearHL();
     document.querySelectorAll('.mbt-cell').forEach(function(el) { el.remove(); });
     document.querySelectorAll('.mbt-header').forEach(function(el) { el.remove(); });
     document.querySelectorAll('tr[data-mbt-id]').forEach(function(el) { el.removeAttribute('data-mbt-id'); });
-    categoriesCache = null;
+    isProcessing = false;
     showSkeleton();
     setTimeout(function() {
       removeSkeleton();
@@ -352,7 +422,11 @@
     
     const table = document.querySelector('table[class*="AccountTable"]');
     if (table && table.querySelector('tbody tr')) {
-      process();
+      showSkeleton();
+      setTimeout(function() {
+        removeSkeleton();
+        process();
+      }, 800);
       return true;
     }
     
@@ -377,9 +451,10 @@
       lastUrl = location.href;
       if (location.href.includes('accountDetails')) {
         processedRows.clear();
+        transactionsCache = null;
         kbRow = -1; kbCol = 0;
         clearHL();
-        categoriesCache = null;
+        isProcessing = false;
         setTimeout(function() {
           document.querySelectorAll('.mbt-cell,.mbt-header').forEach(function(el) { el.remove(); });
           document.querySelectorAll('tr[data-mbt-id]').forEach(function(el) { el.removeAttribute('data-mbt-id'); });
@@ -397,129 +472,30 @@
     if (isNext || isBack) resetAndProcess();
   });
 
-  const origFetch = window.fetch;
-  window.fetch = function() {
-    const url = arguments[0];
-    const isTrans = typeof url === 'string' && url.indexOf('TransHistory') !== -1;
-    const promise = origFetch.apply(window, arguments);
-    if (isTrans) promise.then(function() { setTimeout(resetAndProcess, 1000); });
-    return promise;
-  };
-
+  // Keyboard shortcuts
   document.addEventListener('keydown', function(e) {
+    if (dropdownOpen) return;
+    
     const rows = document.querySelectorAll('tbody tr[data-mbt-id]');
     if (rows.length === 0) return;
-
-    if ((e.metaKey || e.ctrlKey) && (e.key === ',' || e.key === '.')) {
+    
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      clearHL();
-      kbRow = -1; kbCol = 0;
-      if (e.key === ',') {
-        const prev = document.querySelector('.SavingAccountContainer---back_arrow---FqLBL,[class*="back_arrow"]');
-        if (prev) prev.click();
-      } else {
-        const next = document.querySelector('.SavingAccountContainer---next_arrow---jbdUO,[class*="next_arrow"]');
-        if (next) next.click();
-      }
-      return;
-    }
-
-    const active = document.activeElement;
-    const isSelect = active && active.tagName === 'SELECT';
-    const isInput = active && active.tagName === 'INPUT';
-    const isInMbt = active && active.closest && active.closest('.mbt-cell');
-
-    if (!isInMbt && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.key) !== -1) {
+      if (kbRow < rows.length - 1) { kbRow++; focusCell(kbRow, kbCol); }
+    } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      const table = document.querySelector('table[class*="AccountTable"]');
-      if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      kbRow = 0; kbCol = 0;
-      focusCell(0, 0);
-      return;
-    }
-
-    if (!isInMbt) return;
-
-    if (e.key === 'Enter') {
-      const row = active.closest('tr[data-mbt-id]');
-      if (!row) return;
-
-      if (isSelect) {
-        if (!dropdownOpen) {
-          e.preventDefault();
-          dropdownOpen = true;
-          active.click();
-          active.size = Math.min(active.options.length, 5);
-          return;
-        } else {
-          e.preventDefault();
-          dropdownOpen = false;
-          active.size = 1;
-          saveRow(row);
-          for (let i = 0; i < rows.length; i++) if (rows[i] === row) kbRow = i;
-          kbCol = 1;
-          focusCell(kbRow, kbCol);
-          return;
-        }
-      } else if (isInput) {
-        e.preventDefault();
-        saveRow(row);
-        kbRow = Math.min(kbRow + 1, rows.length - 1);
-        kbCol = 0;
-        focusCell(kbRow, kbCol);
-        return;
-      }
-    }
-
-    if (e.key === 'Escape' && isSelect && dropdownOpen) {
-      dropdownOpen = false;
-      active.size = 1;
-      return;
-    }
-
-    if (dropdownOpen && isSelect) return;
-
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.key) !== -1) {
+      if (kbRow > 0) { kbRow--; focusCell(kbRow, kbCol); }
+    } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-
-      const row = active.closest('tr[data-mbt-id]');
-      if (row) {
-        for (let i = 0; i < rows.length; i++) if (rows[i] === row) kbRow = i;
-      }
-      const cell = active.closest('.mbt-cell');
-      if (cell) {
-        const cs = row.querySelectorAll('.mbt-cell');
-        for (let i = 0; i < cs.length; i++) if (cs[i] === cell) kbCol = i < 2 ? i : kbCol;
-      }
-
-      switch (e.key) {
-        case 'ArrowDown': kbRow = Math.min(kbRow + 1, rows.length - 1); break;
-        case 'ArrowUp': kbRow = Math.max(kbRow - 1, 0); break;
-        case 'ArrowRight': kbCol = Math.min(kbCol + 1, 1); break;
-        case 'ArrowLeft': kbCol = Math.max(kbCol - 1, 0); break;
-      }
-
-      focusCell(kbRow, kbCol);
-    }
-  }, true);
-
-  document.addEventListener('focusin', function(e) {
-    const t = e.target;
-    if (t.tagName === 'SELECT' || t.tagName === 'INPUT') {
-      const row = t.closest && t.closest('tr[data-mbt-id]');
-      if (row) {
-        const rows = document.querySelectorAll('tbody tr[data-mbt-id]');
-        for (let i = 0; i < rows.length; i++) if (rows[i] === row) kbRow = i;
-        const cell = t.closest('.mbt-cell');
-        if (cell) {
-          const cs = row.querySelectorAll('.mbt-cell');
-          for (let i = 0; i < cs.length; i++) if (cs[i] === cell) kbCol = i < 2 ? i : kbCol;
-        }
-        highlight(kbRow, kbCol);
-      }
+      if (kbCol < 1) { kbCol++; focusCell(kbRow, kbCol); }
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (kbCol > 0) { kbCol--; focusCell(kbRow, kbCol); }
+    } else if (e.key === 'Enter' && kbRow >= 0) {
+      const cells = rows[kbRow].querySelectorAll('.mbt-cell');
+      const el = kbCol === 0 ? cells[0].querySelector('select') : cells[1].querySelector('input');
+      if (el) el.focus();
     }
   });
-
-  console.log('[MBT] Ghost Cloud extension loaded.');
 
 })();

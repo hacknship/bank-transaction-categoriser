@@ -19,6 +19,14 @@ async function fetchAPI(endpoint, options = {}) {
 export const API = {
   // Categories
   getCategories: () => fetchAPI('/get-categories'),
+  saveCategory: (data) => fetchAPI('/save-category', { 
+    method: 'POST', 
+    body: JSON.stringify(data) 
+  }),
+  deleteCategory: (id) => fetchAPI('/delete-category', { 
+    method: 'POST', 
+    body: JSON.stringify({ id }) 
+  }),
   
   // Transactions
   getTransactions: (params = {}) => {
@@ -28,5 +36,9 @@ export const API = {
   saveTransaction: (data) => fetchAPI('/save-transaction', { 
     method: 'POST', 
     body: JSON.stringify(data) 
+  }),
+  deleteTransaction: (txId) => fetchAPI('/delete-transaction', { 
+    method: 'POST', 
+    body: JSON.stringify({ txId }) 
   }),
 };

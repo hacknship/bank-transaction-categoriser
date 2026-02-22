@@ -81,7 +81,7 @@ function Transactions() {
       if (!tx) return;
       
       await API.saveTransaction({
-        transactionId: id,
+        txId: id,
         accountId: tx.account_id,
         txDate: tx.tx_date,
         description: tx.description,
@@ -95,6 +95,20 @@ function Transactions() {
       console.error('Failed to update:', error);
     }
     setEditingId(null);
+  }
+
+  async function deleteTransaction(txId) {
+    if (!confirm('Delete this transaction?\n\nThis will remove the category and notes data from the database. The transaction will still appear on Maybank, but without categorization.')) {
+      return;
+    }
+    
+    try {
+      await API.deleteTransaction(txId);
+      loadData(); // Refresh
+    } catch (error) {
+      console.error('Failed to delete:', error);
+      alert('Failed to delete transaction: ' + error.message);
+    }
   }
 
   function getCategory(name) {
@@ -251,6 +265,13 @@ function Transactions() {
                         onClick={() => setEditingId(isEditing ? null : tx.tx_id)}
                       >
                         {isEditing ? 'Done' : 'Edit'}
+                      </button>
+                      <button 
+                        className="btn-small btn-red" 
+                        onClick={() => deleteTransaction(tx.tx_id)}
+                        style={{ marginLeft: '8px' }}
+                      >
+                        🗑️
                       </button>
                     </td>
                   </tr>
