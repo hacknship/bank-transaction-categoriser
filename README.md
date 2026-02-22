@@ -153,10 +153,20 @@ maybank-budget-tracker/
 
 | Key | Action |
 |-----|--------|
-| ↑ / ↓ | Navigate rows |
-| ← / → | Switch between CATEGORY and NOTES fields |
-| Enter | Save current row, move to next |
-| Esc | Deactivate extension |
+| ↑ / ↓ | Navigate between transaction rows |
+| ← / → | Switch between CATEGORY and NOTES columns |
+| Enter | Focus/select the current cell (opens dropdown for category) |
+| Space | Open category dropdown (when category column selected) |
+| Esc | Clear focus/Deactivate keyboard navigation |
+| Cmd/Ctrl + . | Go to next page of transactions |
+| Cmd/Ctrl + , | Go to previous page of transactions |
+
+### Usage Tips
+1. Press **Arrow Down** to start keyboard navigation (highlights first row)
+2. Use **Arrow Keys** to move between cells
+3. Press **Enter** or **Space** to open category dropdown
+4. Press **Esc** to exit keyboard navigation at any time
+5. Use **Cmd/Ctrl + .** or **Cmd/Ctrl + ,** to navigate pages without mouse
 
 ## Deployment
 
