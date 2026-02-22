@@ -411,67 +411,54 @@ function ExpenseTracker() {
     <div>
       {/* Header */}
       <header className="header">
-        <h1>📤 Expense Tracker</h1>
-        <p>Track your spending against budgeted amounts</p>
+        <div>
+          <h1>📤 Expense Tracker</h1>
+          <p>Track your spending against budgeted amounts</p>
+        </div>
+        
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Refresh Button */}
+          <button 
+            className="btn-small"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            style={{ opacity: isFetching ? 0.7 : 1 }}
+          >
+            {isFetching ? '🔄 Refreshing...' : '🔄 Refresh'}
+          </button>
+
+          {/* Clear Cache Button */}
+          <button 
+            className="btn-small"
+            onClick={() => {
+              queryClient.clear();
+              window.location.reload();
+            }}
+            style={{ 
+              background: '#ff5555',
+              color: '#fff'
+            }}
+            title="Clear cache and reload if old categories still show"
+          >
+            🧹 Clear Cache
+          </button>
+          
+          {isPastMonth() && (
+            <span style={{ 
+              background: '#000', 
+              color: '#FFD600', 
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              border: '2px solid #FFD600'
+            }}>
+              📜 Historical View
+            </span>
+          )}
+        </div>
       </header>
-
-      {/* Period Selector Bar */}
-      <div className="filter-bar" style={{ background: '#f5f5f5' }}>
-        <span className="filter-label">Period:</span>
-        <select
-          className="filter-input"
-          value={period}
-          onChange={(e) => setPeriod(e.target.value)}
-          disabled={isLoading}
-        >
-          {availablePeriods.map(p => (
-            <option key={p.value} value={p.value}>{p.label}</option>
-          ))}
-        </select>
-
-        {/* Refresh Button */}
-        <button 
-          className="btn-small"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          style={{ 
-            marginLeft: 'auto',
-            opacity: isFetching ? 0.7 : 1
-          }}
-        >
-          {isFetching ? '🔄 Refreshing...' : '🔄 Refresh'}
-        </button>
-
-        {/* Clear Cache Button */}
-        <button 
-          className="btn-small"
-          onClick={() => {
-            queryClient.clear();
-            window.location.reload();
-          }}
-          style={{ 
-            background: '#ff5555',
-            color: '#fff',
-            marginLeft: '8px'
-          }}
-          title="Clear cache and reload if old categories still show"
-        >
-          🧹 Clear Cache
-        </button>
-
-        {isPastMonth() && (
-          <span style={{ 
-            background: '#000', 
-            color: '#FFD600', 
-            padding: '6px 12px',
-            fontSize: '12px',
-            fontWeight: 700,
-            textTransform: 'uppercase'
-          }}>
-            📜 Historical View
-          </span>
-        )}
-      </div>
 
       {/* Budget Sections */}
       <div style={{ padding: '32px' }}>
