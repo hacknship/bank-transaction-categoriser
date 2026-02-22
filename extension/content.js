@@ -6,7 +6,7 @@
   console.log('[MBT] Extension loaded - Ghost Cloud Version');
 
   // Ghost Database API
-  const API_BASE = 'https://maybank-categoriser.netlify.app/.netlify/functions';
+  const API_BASE = 'https://ss-transactions-tracker.netlify.app/.netlify/functions';
   
   let categoriesCache = null;
   let processedRows = new Set();
