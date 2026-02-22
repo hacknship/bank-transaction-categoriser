@@ -37,7 +37,46 @@ exports.handler = async (event) => {
     periodEnd.setDate(periodEnd.getDate() - 1);
     const periodEndStr = periodEnd.toISOString().split('T')[0];
 
-    // Ensure budget snapshots exist for all categories
+    // ===== SYNC SNAPSHOTS WITH CURRENT CATEGORIES =====
+    
+    // 1. Delete snapshots for categories that no longer exist
+    const deletedResult = await client.query(`
+      DELETE FROM budget_snapshots bs
+      WHERE bs.period_start = $1::date
+      AND NOT EXISTS (
+        SELECT 1 FROM categories c WHERE c.id = bs.category_id
+      )
+      RETURNING bs.category_name
+    `, [periodStart]);
+    
+    if (deletedResult.rows.length > 0) {
+      console.log('Deleted snapshots for removed categories:', deletedResult.rows.map(r => r.category_name));
+    }
+
+    // 2. Update snapshot names/icons to match current categories (in case they were renamed)
+    const updatedResult = await client.query(`
+      UPDATE budget_snapshots bs
+      SET 
+        category_name = c.name,
+        category_icon = c.icon,
+        category_type = c.type,
+        updated_at = NOW()
+      FROM categories c
+      WHERE bs.category_id = c.id
+      AND bs.period_start = $1::date
+      AND (
+        bs.category_name IS DISTINCT FROM c.name
+        OR bs.category_icon IS DISTINCT FROM c.icon
+        OR bs.category_type IS DISTINCT FROM c.type
+      )
+      RETURNING bs.category_name as old_name, c.name as new_name
+    `, [periodStart]);
+    
+    if (updatedResult.rows.length > 0) {
+      console.log('Updated snapshot names:', updatedResult.rows);
+    }
+
+    // 3. Ensure budget snapshots exist for all categories with budget_templates
     // First, get or create the budget version
     let versionResult = await client.query(`
       SELECT id FROM budget_versions 
@@ -60,8 +99,7 @@ exports.handler = async (event) => {
       versionId = versionResult.rows[0].id;
     }
 
-    // Create snapshots for categories that don't have one for this period
-    // Get the category's period_type from budget_templates
+    // 4. Create snapshots for categories with budget_templates that don't have one for this period
     await client.query(`
       INSERT INTO budget_snapshots (
         period_type, period_start, period_end,
@@ -79,7 +117,7 @@ exports.handler = async (event) => {
         COALESCE(bt.amount, 0),
         $3
       FROM categories c
-      LEFT JOIN budget_templates bt ON bt.category_id = c.id
+      INNER JOIN budget_templates bt ON bt.category_id = c.id
       WHERE NOT EXISTS (
         SELECT 1 FROM budget_snapshots bs
         WHERE bs.period_start = $1::date
@@ -87,10 +125,8 @@ exports.handler = async (event) => {
       )
     `, [periodStart, periodEndStr, versionId]);
 
-    // Update existing snapshots if the template amount has changed
-    // This ensures budgets set after snapshot creation get updated
-    // Use COALESCE to handle cases where bt.amount might be NULL
-    const updateResult = await client.query(`
+    // 5. Update existing snapshots if the template amount has changed
+    const amountUpdateResult = await client.query(`
       UPDATE budget_snapshots bs
       SET 
         budgeted_amount = COALESCE(bt.amount, 0),
@@ -106,12 +142,11 @@ exports.handler = async (event) => {
       RETURNING bs.category_name, bs.budgeted_amount, COALESCE(bt.amount, 0) as new_amount
     `, [periodStart]);
     
-    if (updateResult.rows.length > 0) {
-      console.log('Updated snapshots:', updateResult.rows);
+    if (amountUpdateResult.rows.length > 0) {
+      console.log('Updated snapshot amounts:', amountUpdateResult.rows);
     }
 
     // Get all snapshots for this period with actual spending
-    // Use the snapshot's period_type (which is the category's period_type)
     let query = `
       SELECT 
         bs.id,
