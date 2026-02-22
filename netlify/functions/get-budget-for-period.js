@@ -95,6 +95,7 @@ exports.handler = async (event) => {
         bs.category_icon,
         bs.category_type,
         bs.budgeted_amount,
+        bt.period_type,
         COALESCE(
           (SELECT SUM(t.amount)
            FROM transactions t
@@ -104,6 +105,7 @@ exports.handler = async (event) => {
           0
         ) as actual_spent
       FROM budget_snapshots bs
+      LEFT JOIN budget_templates bt ON bt.category_id = bs.category_id
       WHERE bs.period_start = $1
     `;
     const queryParams = [periodStart, periodEndStr];
