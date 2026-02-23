@@ -1,11 +1,30 @@
 const { Client } = require('pg');
-const { getCorsHeaders, handlePreflight } = require('./utils/cors');
+
+const getCorsHeaders = (headers = {}) => {
+  const origin = headers.origin || headers.Origin || '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Content-Type': 'application/json'
+  };
+};
 
 exports.handler = async (event) => {
-  const headers = getCorsHeaders(event.headers.origin);
+  const headers = getCorsHeaders(event.headers);
 
   if (event.httpMethod === 'OPTIONS') {
-    return handlePreflight(headers);
+    return { statusCode: 204, headers, body: '' };
+  }
+
+  // Validate DATABASE_URL is set
+  if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL not set');
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'DATABASE_URL environment variable is not set' })
+    };
   }
 
   if (event.httpMethod !== 'POST') {
@@ -47,7 +66,8 @@ exports.handler = async (event) => {
     };
 
   } catch (error) {
-    await client.end();
+    console.error('Database error:', error.message);
+    try { await client.end(); } catch (e) {}
     return {
       statusCode: 500,
       headers,
