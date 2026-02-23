@@ -344,14 +344,14 @@ function SavingsTracker() {
   return (
     <div>
       {/* Header */}
-      <header className="header" style={{ background: '#FFD600', color: '#000', borderBottomColor: '#000' }}>
+      <header className="header" style={{ background: '#FFD600', color: '#000', borderBottomColor: '#000', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>📥 Savings & Investment Tracker</h1>
           <p style={{ color: '#333' }}>Track your savings goals and investment progress</p>
         </div>
         
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginLeft: 'auto' }}>
           {/* Refresh Button */}
           <button 
             className="btn-small"

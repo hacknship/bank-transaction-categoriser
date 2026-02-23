@@ -195,9 +195,21 @@ function Transactions() {
                 const isEditing = editingId === tx.tx_id;
                 const category = getCategory(tx.category);
                 
+                // Format date
+                const formatDate = (dateStr) => {
+                  if (!dateStr) return '-';
+                  const date = new Date(dateStr);
+                  if (isNaN(date.getTime())) return dateStr;
+                  return date.toLocaleDateString('en-MY', {
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric'
+                  });
+                };
+                
                 return (
                   <tr key={tx.tx_id}>
-                    <td className="cell-date">{tx.tx_date}</td>
+                    <td className="cell-date">{formatDate(tx.tx_date)}</td>
                     <td className="cell-account">
                       <span className="account-badge">{tx.account_id?.slice(-4) || 'N/A'}</span>
                     </td>

@@ -410,14 +410,14 @@ function ExpenseTracker() {
   return (
     <div>
       {/* Header */}
-      <header className="header">
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>📤 Expense Tracker</h1>
           <p>Track your spending against budgeted amounts</p>
         </div>
         
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginLeft: 'auto' }}>
           {/* Refresh Button */}
           <button 
             className="btn-small"
@@ -602,7 +602,7 @@ function ExpenseTracker() {
                   </thead>
                   <tbody>
                     {categoryTransactions
-                      .sort((a, b) => new Date(b.date) - new Date(a.date))
+                      .sort((a, b) => new Date(b.tx_date || b.date) - new Date(a.tx_date || a.date))
                       .map((transaction, index) => (
                       <tr 
                         key={transaction.id || index}
@@ -612,11 +612,17 @@ function ExpenseTracker() {
                         }}
                       >
                         <td style={{ padding: '12px 8px' }}>
-                          {new Date(transaction.date).toLocaleDateString('en-MY', {
-                            day: '2-digit',
-                            month: 'short',
-                            year: 'numeric'
-                          })}
+                          {(() => {
+                            const dateStr = transaction.tx_date || transaction.date;
+                            if (!dateStr) return 'No date';
+                            const date = new Date(dateStr);
+                            if (isNaN(date.getTime())) return dateStr;
+                            return date.toLocaleDateString('en-MY', {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric'
+                            });
+                          })()}
                         </td>
                         <td style={{ padding: '12px 8px' }}>
                           {transaction.description}
