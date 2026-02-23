@@ -8,15 +8,15 @@
 // List of allowed origins for CORS
 // In production, replace with your actual domain(s)
 const ALLOWED_ORIGINS = [
-  // Production domain
-  process.env.URL, // Netlify's default environment variable for site URL
-  process.env.DEPLOY_URL, // Netlify's deploy preview URL
+  // Production domain (Netlify provides these automatically)
+  process.env.URL, // e.g., https://your-site.netlify.app
+  process.env.DEPLOY_URL, // Deploy preview URL
+  process.env.DEPLOY_PRIME_URL, // Production deploy URL
   
   // Add your custom domains here:
-  // 'https://your-domain.com',
-  // 'https://app.your-domain.com',
+  'https://ss-transactions-tracker.netlify.app',
   
-  // Local development (only include in non-production)
+  // Local development
   'http://localhost:5173',
   'http://localhost:8888',
   'http://127.0.0.1:5173',
@@ -25,14 +25,17 @@ const ALLOWED_ORIGINS = [
 
 /**
  * Get CORS headers based on the request origin
- * @param {string} requestOrigin - The origin from the request headers
+ * @param {Object} headers - The event.headers object from Netlify function
  * @returns {Object} CORS headers
  */
-function getCorsHeaders(requestOrigin) {
+function getCorsHeaders(headers = {}) {
+  // Handle case-insensitive header access
+  const requestOrigin = headers.origin || headers.Origin || '';
+  
   // Check if the origin is allowed
   const isAllowed = ALLOWED_ORIGINS.includes(requestOrigin);
   
-  // In development or if origin is allowed, return it; otherwise return the first allowed origin
+  // If origin is allowed, return it; otherwise use the first allowed origin or wildcard as fallback
   const allowedOrigin = isAllowed ? requestOrigin : (ALLOWED_ORIGINS[0] || '*');
   
   return {
