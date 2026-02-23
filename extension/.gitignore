@@ -1,0 +1,14 @@
+# Extension packages
+*.zip
+*.crx
+*.xpi
+
+# Environment variables - NEVER commit these
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store

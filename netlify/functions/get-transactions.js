@@ -1,15 +1,12 @@
 const { Client } = require('pg');
+const { getCorsHeaders, handlePreflight } = require('./utils/cors');
 
 exports.handler = async (event, context) => {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Content-Type': 'application/json'
-  };
+  // Get CORS headers based on request origin
+  const headers = getCorsHeaders(event.headers.origin);
 
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+    return handlePreflight(headers);
   }
 
   const client = new Client({

@@ -1,10 +1,8 @@
 const { Client } = require('pg');
+const { getCorsHeaders, handlePreflight } = require('./utils/cors');
 
 exports.handler = async (event) => {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Content-Type': 'application/json'
-  };
+  const headers = getCorsHeaders(event.headers.origin);
 
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
