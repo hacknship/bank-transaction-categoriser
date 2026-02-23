@@ -1,38 +1,58 @@
-import { useState, useMemo } from 'react';
-import { useTransactions, useCategories, useSaveTransaction, useDeleteTransaction } from '../hooks/useTransactions';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useInfiniteTransactions, useTransactionTotals, useCategories, useSaveTransaction, useDeleteTransaction } from '../hooks/useTransactions';
 
 function Transactions() {
   const [filters, setFilters] = useState({
     account: '',
     category: '',
-    search: ''
+    search: '',
+    startDate: '',
+    endDate: ''
   });
   const [editingId, setEditingId] = useState(null);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [jsonContent, setJsonContent] = useState('');
+  const observerRef = useRef(null);
+  const loadMoreRef = useRef(null);
 
-  // TanStack Query hooks
-  const { 
-    data: transactions = [], 
+  // Build API filters (exclude search - we do that client-side)
+  const apiFilters = useMemo(() => {
+    const f = {};
+    if (filters.account) f.accountId = filters.account;
+    if (filters.category) f.category = filters.category;
+    if (filters.startDate) f.startDate = filters.startDate;
+    if (filters.endDate) f.endDate = filters.endDate;
+    return f;
+  }, [filters]);
+
+  // Infinite scroll for transactions
+  const {
+    data,
     isLoading,
-    isFetching,
-    refetch 
-  } = useTransactions();
-  
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch
+  } = useInfiniteTransactions(apiFilters);
+
+  // Get totals from ALL transactions (not just loaded ones)
+  const { data: totalsData } = useTransactionTotals(apiFilters);
+
   const { data: categories = [] } = useCategories();
   const saveMutation = useSaveTransaction();
   const deleteMutation = useDeleteTransaction();
 
-  // Extract unique accounts
+  const transactions = data?.transactions || [];
+  const pagination = data?.pagination;
+
+  // Extract unique accounts from loaded transactions
   const accounts = useMemo(() => {
     return [...new Set(transactions.map(t => t.account_id).filter(Boolean))];
   }, [transactions]);
 
-  // Filter transactions
+  // Client-side filter for search
   const filteredTransactions = useMemo(() => {
     return transactions.filter(tx => {
-      if (filters.account && tx.account_id !== filters.account) return false;
-      if (filters.category && tx.category !== filters.category) return false;
       if (filters.search) {
         const search = filters.search.toLowerCase();
         const desc = (tx.description || '').toLowerCase();
@@ -41,15 +61,63 @@ function Transactions() {
       }
       return true;
     });
-  }, [transactions, filters]);
+  }, [transactions, filters.search]);
 
-  // Stats
-  const totalCount = transactions.length;
-  const accountCount = accounts.length;
-  const categoryCount = [...new Set(transactions.map(t => t.category).filter(Boolean))].length;
-  const totalAmount = transactions.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+  // Calculate filtered totals (client-side for search)
+  const filteredTotals = useMemo(() => {
+    return filteredTransactions.reduce((acc, tx) => {
+      const amount = parseFloat(tx.amount || 0);
+      acc.count++;
+      if (amount < 0) {
+        acc.outgoing += Math.abs(amount);
+      } else {
+        acc.incoming += amount;
+      }
+      acc.net += amount;
+      return acc;
+    }, { count: 0, outgoing: 0, incoming: 0, net: 0 });
+  }, [filteredTransactions]);
 
-  // Actions
+  // Use API totals when no search filter, otherwise use filtered totals
+  const displayTotals = filters.search ? filteredTotals : (totalsData || { count: 0, outgoing: 0, incoming: 0, net: 0 });
+
+  // Infinite scroll observer
+  useEffect(() => {
+    if (observerRef.current) observerRef.current.disconnect();
+    
+    observerRef.current = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    }, { threshold: 0.1 });
+
+    if (loadMoreRef.current) {
+      observerRef.current.observe(loadMoreRef.current);
+    }
+
+    return () => observerRef.current?.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // Format date
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    return date.toLocaleDateString('en-MY', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  };
+
+  // Format currency
+  const formatCurrency = (amount) => {
+    return `RM ${parseFloat(amount || 0).toLocaleString('en-MY', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+  };
+
   function handleRefresh() {
     refetch();
   }
@@ -92,6 +160,10 @@ function Transactions() {
     return categories.find(c => c.name === name) || { name, icon: '📦', color: '#666' };
   }
 
+  const uniqueCategories = useMemo(() => {
+    return [...new Set(transactions.map(t => t.category).filter(Boolean))];
+  }, [transactions]);
+
   return (
     <div>
       {/* Header */}
@@ -100,47 +172,58 @@ function Transactions() {
         <p>View and manage your categorized Maybank transactions from the cloud</p>
       </header>
 
-      {/* Stats */}
+      {/* Stats - Show totals from ALL transactions in database */}
       <div className="stats-bar">
         <div className="stat-box">
           <div className="stat-label">Total Transactions</div>
-          <div className="stat-value yellow">{totalCount}</div>
+          <div className="stat-value yellow">{displayTotals.count.toLocaleString()}</div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">Unique Accounts</div>
-          <div className="stat-value">{accountCount}</div>
+          <div className="stat-label">Outgoing (Spent)</div>
+          <div className="stat-value" style={{ color: 'var(--red)' }}>
+            {formatCurrency(displayTotals.outgoing)}
+          </div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">Categories Used</div>
-          <div className="stat-value">{categoryCount}</div>
+          <div className="stat-label">Incoming (Received)</div>
+          <div className="stat-value" style={{ color: 'var(--green)' }}>
+            {formatCurrency(displayTotals.incoming)}
+          </div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">Total Amount</div>
-          <div className={totalAmount < 0 ? 'stat-value amount-negative' : 'stat-value'}>
-            RM {Math.abs(totalAmount).toFixed(2)}
+          <div className="stat-label">Net Balance</div>
+          <div className="stat-value" style={{ 
+            color: displayTotals.net < 0 ? 'var(--red)' : displayTotals.net > 0 ? 'var(--green)' : '#000'
+          }}>
+            {formatCurrency(Math.abs(displayTotals.net))}
           </div>
         </div>
       </div>
 
       {/* Actions */}
       <div className="actions">
-        <button className="btn btn-yellow" onClick={handleRefresh} disabled={isFetching}>
-          {isFetching ? '🔄 Refreshing...' : '🔄 Refresh Data'}
+        <button className="btn btn-yellow" onClick={handleRefresh} disabled={isFetchingNextPage}>
+          {isFetchingNextPage ? '🔄 Loading...' : '🔄 Refresh Data'}
         </button>
         <button className="btn btn-black" onClick={exportJSON}>📥 Export JSON</button>
+        <span style={{ marginLeft: 'auto', fontSize: '14px', color: '#666' }}>
+          Loaded: {transactions.length.toLocaleString()} transactions
+          {pagination?.hasMore && ' (scroll to load more)'}
+        </span>
       </div>
 
       {/* Filters */}
-      <div className="filter-bar">
-        <span className="filter-label">Filter by Account:</span>
+      <div className="filter-bar" style={{ flexWrap: 'wrap', gap: '12px' }}>
+        <span className="filter-label">Account:</span>
         <select 
           className="filter-input" 
           value={filters.account}
           onChange={(e) => setFilters({...filters, account: e.target.value})}
+          style={{ minWidth: '140px' }}
         >
           <option value="">All Accounts</option>
           {accounts.map(acc => (
-            <option key={acc} value={acc}>{acc}</option>
+            <option key={acc} value={acc}>{acc.slice(-4)}</option>
           ))}
         </select>
         
@@ -149,21 +232,49 @@ function Transactions() {
           className="filter-input" 
           value={filters.category}
           onChange={(e) => setFilters({...filters, category: e.target.value})}
+          style={{ minWidth: '180px' }}
         >
           <option value="">All Categories</option>
-          {categories.map(cat => (
-            <option key={cat.id} value={cat.name}>{cat.icon} {cat.name}</option>
+          {uniqueCategories.map(cat => (
+            <option key={cat} value={cat}>{cat}</option>
           ))}
         </select>
+
+        <span className="filter-label">From:</span>
+        <input 
+          type="date" 
+          className="filter-input" 
+          value={filters.startDate}
+          onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+        />
+
+        <span className="filter-label">To:</span>
+        <input 
+          type="date" 
+          className="filter-input" 
+          value={filters.endDate}
+          onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+        />
         
         <span className="filter-label">Search:</span>
         <input 
           type="text" 
           className="filter-input" 
-          placeholder="Description..."
+          placeholder="Description or notes..."
           value={filters.search}
           onChange={(e) => setFilters({...filters, search: e.target.value})}
+          style={{ minWidth: '200px' }}
         />
+
+        {(filters.account || filters.category || filters.startDate || filters.endDate || filters.search) && (
+          <button 
+            className="btn-small"
+            onClick={() => setFilters({ account: '', category: '', search: '', startDate: '', endDate: '' })}
+            style={{ background: '#ff5555', color: '#fff' }}
+          >
+            Clear Filters
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -174,104 +285,114 @@ function Transactions() {
           </div>
         ) : filteredTransactions.length === 0 ? (
           <div className="empty-state">
-            <h2>No Transactions Yet</h2>
-            <p>Go to your Maybank account page and categorize some transactions using the Chrome extension. They will appear here automatically.</p>
+            <h2>No Transactions Found</h2>
+            <p>
+              {filters.account || filters.category || filters.startDate || filters.endDate || filters.search
+                ? 'Try adjusting your filters to see more results.'
+                : 'Go to your Maybank account page and categorize some transactions using the Chrome extension. They will appear here automatically.'}
+            </p>
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Account</th>
-                <th>Description</th>
-                <th>Amount</th>
-                <th>Category</th>
-                <th>Notes</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTransactions.map((tx) => {
-                const isEditing = editingId === tx.tx_id;
-                const category = getCategory(tx.category);
-                
-                // Format date
-                const formatDate = (dateStr) => {
-                  if (!dateStr) return '-';
-                  const date = new Date(dateStr);
-                  if (isNaN(date.getTime())) return dateStr;
-                  return date.toLocaleDateString('en-MY', {
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric'
-                  });
-                };
-                
-                return (
-                  <tr key={tx.tx_id}>
-                    <td className="cell-date">{formatDate(tx.tx_date)}</td>
-                    <td className="cell-account">
-                      <span className="account-badge">{tx.account_id?.slice(-4) || 'N/A'}</span>
-                    </td>
-                    <td className="cell-desc">{tx.description}</td>
-                    <td className={`cell-amount ${parseFloat(tx.amount) < 0 ? 'amount-negative' : 'amount-positive'}`}>
-                      {parseFloat(tx.amount) < 0 ? '-' : ''}RM {Math.abs(parseFloat(tx.amount)).toFixed(2)}
-                    </td>
-                    <td className="cell-category">
-                      {isEditing ? (
-                        <select
-                          className="category-select"
-                          value={tx.category || ''}
-                          onChange={(e) => updateTransaction(tx.tx_id, { category: e.target.value })}
-                          autoFocus
+          <>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Account</th>
+                  <th>Description</th>
+                  <th>Amount</th>
+                  <th>Category</th>
+                  <th>Notes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTransactions.map((tx) => {
+                  const isEditing = editingId === tx.tx_id;
+                  const category = getCategory(tx.category);
+                  
+                  return (
+                    <tr key={tx.tx_id}>
+                      <td className="cell-date">{formatDate(tx.tx_date)}</td>
+                      <td className="cell-account">
+                        <span className="account-badge">{tx.account_id?.slice(-4) || 'N/A'}</span>
+                      </td>
+                      <td className="cell-desc">{tx.description}</td>
+                      <td className={`cell-amount ${parseFloat(tx.amount) < 0 ? 'amount-negative' : 'amount-positive'}`}>
+                        {parseFloat(tx.amount) < 0 ? '-' : ''}RM {Math.abs(parseFloat(tx.amount)).toFixed(2)}
+                      </td>
+                      <td className="cell-category">
+                        {isEditing ? (
+                          <select
+                            className="category-select"
+                            value={tx.category || ''}
+                            onChange={(e) => updateTransaction(tx.tx_id, { category: e.target.value })}
+                            autoFocus
+                          >
+                            <option value="">-- Select --</option>
+                            {categories.map(cat => (
+                              <option key={cat.id} value={cat.name}>{cat.icon} {cat.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="category-badge">{category.icon} {tx.category || 'Uncategorized'}</span>
+                        )}
+                      </td>
+                      <td className="cell-notes">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            className="notes-input"
+                            defaultValue={tx.notes || ''}
+                            onBlur={(e) => updateTransaction(tx.tx_id, { notes: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                updateTransaction(tx.tx_id, { notes: e.target.value });
+                              }
+                            }}
+                            autoFocus={!tx.category}
+                          />
+                        ) : (
+                          tx.notes || '-'
+                        )}
+                      </td>
+                      <td className="cell-actions">
+                        <button 
+                          className="btn-small btn-yellow" 
+                          onClick={() => setEditingId(isEditing ? null : tx.tx_id)}
                         >
-                          <option value="">-- Select --</option>
-                          {categories.map(cat => (
-                            <option key={cat.id} value={cat.name}>{cat.icon} {cat.name}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="category-badge">{category.icon} {tx.category || 'Uncategorized'}</span>
-                      )}
-                    </td>
-                    <td className="cell-notes">
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          className="notes-input"
-                          defaultValue={tx.notes || ''}
-                          onBlur={(e) => updateTransaction(tx.tx_id, { notes: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              updateTransaction(tx.tx_id, { notes: e.target.value });
-                            }
-                          }}
-                          autoFocus={!tx.category}
-                        />
-                      ) : (
-                        tx.notes || '-'
-                      )}
-                    </td>
-                    <td className="cell-actions">
-                      <button 
-                        className="btn-small btn-yellow" 
-                        onClick={() => setEditingId(isEditing ? null : tx.tx_id)}
-                      >
-                        {isEditing ? 'Done' : 'Edit'}
-                      </button>
-                      <button 
-                        className="btn-small btn-red" 
-                        onClick={() => deleteTransaction(tx.tx_id)}
-                        style={{ marginLeft: '8px' }}
-                      >
-                        🗑️
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          {isEditing ? 'Done' : 'Edit'}
+                        </button>
+                        <button 
+                          className="btn-small btn-red" 
+                          onClick={() => deleteTransaction(tx.tx_id)}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          🗑️
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Load more sentinel */}
+            <div 
+              ref={loadMoreRef}
+              style={{ 
+                padding: '20px', 
+                textAlign: 'center',
+                visibility: hasNextPage ? 'visible' : 'hidden'
+              }}
+            >
+              {isFetchingNextPage ? (
+                <span>Loading more transactions...</span>
+              ) : (
+                <span style={{ color: '#999' }}>Scroll down to load more</span>
+              )}
+            </div>
+          </>
         )}
       </div>
 

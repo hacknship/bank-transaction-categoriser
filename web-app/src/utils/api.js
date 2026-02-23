@@ -39,6 +39,10 @@ export const API = {
     const query = new URLSearchParams(params).toString();
     return fetchAPI(`/get-transactions?${query}`);
   },
+  getTransactionTotals: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchAPI(`/get-transaction-totals?${query}`);
+  },
   saveTransaction: (data) => fetchAPI('/save-transaction', { 
     method: 'POST', 
     body: JSON.stringify(data) 
