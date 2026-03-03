@@ -6,19 +6,20 @@ import { queryKeys } from '../lib/queryClient';
 export function useTransactions() {
   return useQuery({
     queryKey: queryKeys.transactions,
-    queryFn: API.getTransactions,
+    queryFn: () => API.getTransactions({ useBudgetDate: 'true' }),
     select: (data) => data.transactions || [],
   });
 }
 
 // Get paginated transactions with infinite scroll
-export function useInfiniteTransactions(filters = {}) {
+export function useInfiniteTransactions(filters = {}, useBudgetDate = 'false') {
   return useInfiniteQuery({
-    queryKey: [...queryKeys.transactions, 'infinite', filters],
+    queryKey: [...queryKeys.transactions, 'infinite', filters, useBudgetDate],
     queryFn: async ({ pageParam = 0 }) => {
       const params = {
         limit: '20',
         offset: String(pageParam),
+        useBudgetDate,
         ...filters
       };
       return API.getTransactions(params);
@@ -40,10 +41,10 @@ export function useInfiniteTransactions(filters = {}) {
 }
 
 // Get transaction totals
-export function useTransactionTotals(filters = {}) {
+export function useTransactionTotals(filters = {}, useBudgetDate = 'false') {
   return useQuery({
-    queryKey: [...queryKeys.transactions, 'totals', filters],
-    queryFn: () => API.getTransactionTotals(filters),
+    queryKey: [...queryKeys.transactions, 'totals', filters, useBudgetDate],
+    queryFn: () => API.getTransactionTotals({ ...filters, useBudgetDate }),
     select: (data) => data.totals || { count: 0, outgoing: 0, incoming: 0, net: 0 },
   });
 }
@@ -57,14 +58,59 @@ export function useCategories() {
   });
 }
 
-// Save a transaction
+// Save a transaction with Optimistic Updates
 export function useSaveTransaction() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: API.saveTransaction,
-    onSuccess: () => {
+    // When mutate is called:
+    onMutate: async (newTx) => {
+      // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
+      await queryClient.cancelQueries({ queryKey: queryKeys.transactions });
+
+      // Snapshot the previous value
+      const previousData = queryClient.getQueryData([...queryKeys.transactions, 'infinite']);
+
+      // Optimistically update to the new value
+      queryClient.setQueriesData({ queryKey: queryKeys.transactions }, (old) => {
+        if (!old) return old;
+
+        // For infinite queries
+        if (old.pages) {
+          console.log('Optimistically updating infinite query pages...');
+          return {
+            ...old,
+            pages: old.pages.map(page => ({
+              ...page,
+              transactions: page.transactions?.map(tx =>
+                tx.tx_id === newTx.txId ? {
+                  ...tx,
+                  category: newTx.category !== undefined ? newTx.category : tx.category,
+                  notes: newTx.notes !== undefined ? newTx.notes : tx.notes,
+                  budget_date: newTx.budgetDate !== undefined ? newTx.budgetDate : tx.budget_date
+                } : tx
+              )
+            }))
+          };
+        }
+
+        return old;
+      });
+
+      // Return a context object with the snapshotted value
+      return { previousData };
+    },
+    // If the mutation fails, use the context returned from onMutate to roll back
+    onError: (err, newTx, context) => {
+      queryClient.setQueriesData({ queryKey: queryKeys.transactions }, context.previousData);
+    },
+    // Always refetch after error or success:
+    onSettled: () => {
+      // Invalidate both infinite and totals
       queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
+      // Invalidate relevant tracker queries
+      queryClient.invalidateQueries({ queryKey: ['budget'] });
     },
   });
 }
@@ -72,7 +118,7 @@ export function useSaveTransaction() {
 // Delete a transaction
 export function useDeleteTransaction() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: API.deleteTransaction,
     onSuccess: () => {

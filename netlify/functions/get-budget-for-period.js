@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+require('./utils/db');
 
 const getCorsHeaders = (headers = {}) => {
   const origin = headers.origin || headers.Origin || '*';
@@ -54,7 +55,7 @@ exports.handler = async (event) => {
     const periodEndStr = periodEnd.toISOString().split('T')[0];
 
     // ===== SYNC SNAPSHOTS WITH CURRENT CATEGORIES =====
-    
+
     // 1. Delete snapshots for categories that no longer exist
     const deletedResult = await client.query(`
       DELETE FROM budget_snapshots bs
@@ -64,7 +65,7 @@ exports.handler = async (event) => {
       )
       RETURNING bs.category_name
     `, [periodStart]);
-    
+
     if (deletedResult.rows.length > 0) {
       console.log('Deleted snapshots for removed categories:', deletedResult.rows.map(r => r.category_name));
     }
@@ -87,7 +88,7 @@ exports.handler = async (event) => {
       )
       RETURNING bs.category_name as old_name, c.name as new_name
     `, [periodStart]);
-    
+
     if (updatedResult.rows.length > 0) {
       console.log('Updated snapshot names:', updatedResult.rows);
     }
@@ -157,7 +158,7 @@ exports.handler = async (event) => {
       )
       RETURNING bs.category_name, bs.budgeted_amount, COALESCE(bt.amount, 0) as new_amount
     `, [periodStart]);
-    
+
     if (amountUpdateResult.rows.length > 0) {
       console.log('Updated snapshot amounts:', amountUpdateResult.rows);
     }
@@ -175,18 +176,17 @@ exports.handler = async (event) => {
         COALESCE(
           (SELECT SUM(t.amount)
            FROM transactions t
-           WHERE t.category = bs.category_name
-           AND t.tx_date >= $1
-           AND t.tx_date <= $2),
+           WHERE LOWER(t.category) = LOWER(bs.category_name)
+           AND DATE_TRUNC('month', COALESCE(t.budget_date, t.tx_date)::date) = DATE_TRUNC('month', $1::date)),
           0
         ) as actual_spent
       FROM budget_snapshots bs
       WHERE bs.period_start = $1
     `;
-    const queryParams = [periodStart, periodEndStr];
+    const queryParams = [periodStart]; // periodEndStr was not used in this query, removed from params
 
     if (type) {
-      query += ` AND bs.category_type = $3`;
+      query += ` AND bs.category_type = $2`;
       queryParams.push(type);
     }
 
@@ -229,11 +229,11 @@ exports.handler = async (event) => {
 
   } catch (error) {
     console.error('Database error:', error.message);
-    try { await client.end(); } catch (e) {}
+    try { await client.end(); } catch (e) { }
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         error: error.message,
         detail: error.detail,
         hint: error.hint

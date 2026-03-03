@@ -2,34 +2,36 @@ import { useState, useEffect, useMemo } from 'react';
 import { useBudget, useAvailablePeriods, useUpdateSnapshotBudget } from '../hooks/useBudget';
 import { queryClient } from '../lib/queryClient';
 import { API } from '../utils/api';
+import { parseISO } from '../utils/dateUtils';
 
 function ExpenseTracker() {
   const [period, setPeriod] = useState('');
   const [editingCategory, setEditingCategory] = useState(null);
   const [editAmount, setEditAmount] = useState('');
-  
+
   // Modal state for transactions
   const [showTransactionsModal, setShowTransactionsModal] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [categoryTransactions, setCategoryTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
 
-  // Initialize with current month
+  // Initialize with current month (local-time aware)
   useEffect(() => {
     const now = new Date();
-    const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    setPeriod(currentPeriod);
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    setPeriod(`${year}-${month}`);
   }, []);
 
   // TanStack Query hooks
   const { data: availablePeriods = [] } = useAvailablePeriods();
-  const { 
-    data: budgetData, 
-    isLoading, 
-    isFetching, 
-    refetch 
+  const {
+    data: budgetData,
+    isLoading,
+    isFetching,
+    refetch
   } = useBudget(period, 'expense');
-  
+
   const updateSnapshotMutation = useUpdateSnapshotBudget();
 
   const handleEditClick = (category) => {
@@ -46,7 +48,7 @@ function ExpenseTracker() {
       newAmount: parseFloat(editAmount),
       reason: 'Manual adjustment from tracker'
     });
-    
+
     setEditingCategory(null);
     setEditAmount('');
   };
@@ -60,9 +62,9 @@ function ExpenseTracker() {
   };
 
   const formatCurrency = (amount) => {
-    return `RM ${parseFloat(amount || 0).toLocaleString('en-MY', { 
+    return `RM ${parseFloat(amount || 0).toLocaleString('en-MY', {
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0 
+      maximumFractionDigits: 0
     })}`;
   };
 
@@ -82,18 +84,22 @@ function ExpenseTracker() {
         startDate = `${period}-01-01`;
         endDate = `${period}-12-31`;
       } else {
-        // Month period
-        const [year, month] = period.split('-');
-        startDate = `${year}-${month}-01`;
-        const lastDay = new Date(year, month, 0).getDate();
-        endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        // Month period (Using parseISO for local calculation)
+        const date = parseISO(`${period}-01`);
+        startDate = `${period}-01`;
+
+        const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+        const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 0);
+
+        endDate = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
       }
-      
-      const data = await API.getTransactions({ 
-        category: categoryName, 
+
+      const data = await API.getTransactions({
+        category: categoryName,
         limit: '1000',
         startDate,
-        endDate
+        endDate,
+        useBudgetDate: 'true' // Hint to backend to use COALESCE(budget_date, tx_date)
       });
       setCategoryTransactions(data.transactions || []);
     } catch (error) {
@@ -128,7 +134,7 @@ function ExpenseTracker() {
   // Group budgets by period type
   const budgetsByType = useMemo(() => {
     if (!budgetData?.budgets) return {};
-    
+
     const grouped = {};
     budgetData.budgets.forEach(budget => {
       const periodType = budget.period_type || 'monthly';
@@ -161,15 +167,15 @@ function ExpenseTracker() {
     return (
       <div key={periodType} style={{ marginBottom: '48px' }}>
         {/* Section Header */}
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'center',
           marginBottom: '16px',
           flexWrap: 'wrap',
           gap: '16px'
         }}>
-          <h2 style={{ 
+          <h2 style={{
             margin: 0,
             background: '#FFD600',
             padding: '8px 16px',
@@ -181,7 +187,7 @@ function ExpenseTracker() {
           }}>
             {title}
           </h2>
-          
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="filter-label">
               {periodType === 'yearly' ? 'Year:' : 'Month:'}
@@ -200,12 +206,12 @@ function ExpenseTracker() {
         </div>
 
         {/* Section Description */}
-        <p style={{ 
-          color: '#666', 
+        <p style={{
+          color: '#666',
           marginBottom: '20px',
           fontSize: '14px'
         }}>
-          In total, {formatCurrency(summary.totalSpent)} out of budgeted {formatCurrency(summary.totalBudgeted)} has been spent. 
+          In total, {formatCurrency(summary.totalSpent)} out of budgeted {formatCurrency(summary.totalBudgeted)} has been spent.
           Balance: {formatCurrency(summary.remaining)}.
         </p>
 
@@ -223,7 +229,7 @@ function ExpenseTracker() {
           </div>
           <div className="stat-box">
             <div className="stat-label">Remaining</div>
-            <div className="stat-value" style={{ 
+            <div className="stat-value" style={{
               color: summary.remaining >= 0 ? 'var(--green)' : 'var(--red)'
             }}>
               {formatCurrency(summary.remaining)}
@@ -236,8 +242,8 @@ function ExpenseTracker() {
         </div>
 
         {/* Category Cards Grid */}
-        <div style={{ 
-          display: 'grid', 
+        <div style={{
+          display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
           gap: '24px'
         }}>
@@ -246,13 +252,13 @@ function ExpenseTracker() {
             const spent = Math.abs(parseFloat(category.actual_spent || 0));
             const budgeted = parseFloat(category.budgeted_amount || 0);
             const remaining = budgeted - spent;
-            const percentUsed = budgeted > 0 
+            const percentUsed = budgeted > 0
               ? Math.min(100, (spent / budgeted) * 100)
               : 0;
             const isOverBudget = remaining < 0;
 
             return (
-              <div 
+              <div
                 key={category.category_id}
                 onClick={() => handleCardClick(category)}
                 style={{
@@ -267,9 +273,9 @@ function ExpenseTracker() {
                 }}
               >
                 {/* Header */}
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
                   gap: '12px',
                   marginBottom: '16px'
                 }}>
@@ -286,8 +292,8 @@ function ExpenseTracker() {
                     {category.category_icon || '📦'}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ 
-                      fontWeight: 700, 
+                    <div style={{
+                      fontWeight: 700,
                       fontSize: '16px',
                       textTransform: 'uppercase'
                     }}>
@@ -301,8 +307,8 @@ function ExpenseTracker() {
 
                 {/* Stats */}
                 <div style={{ marginBottom: '16px' }}>
-                  <div style={{ 
-                    display: 'flex', 
+                  <div style={{
+                    display: 'flex',
                     justifyContent: 'space-between',
                     marginBottom: '8px',
                     fontSize: '14px'
@@ -328,10 +334,10 @@ function ExpenseTracker() {
                       transition: 'width 0.3s ease'
                     }} />
                   </div>
-                  
-                  <div style={{ 
-                    textAlign: 'right', 
-                    fontSize: '11px', 
+
+                  <div style={{
+                    textAlign: 'right',
+                    fontSize: '11px',
                     marginTop: '4px',
                     color: '#888'
                   }}>
@@ -356,13 +362,13 @@ function ExpenseTracker() {
                           }}
                           autoFocus
                         />
-                        <button 
+                        <button
                           className="btn-small btn-yellow"
                           onClick={handleSaveEdit}
                         >
                           Save
                         </button>
-                        <button 
+                        <button
                           className="btn-small"
                           onClick={() => setEditingCategory(null)}
                         >
@@ -370,7 +376,7 @@ function ExpenseTracker() {
                         </button>
                       </>
                     ) : (
-                      <button 
+                      <button
                         className="btn-small"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -415,11 +421,11 @@ function ExpenseTracker() {
           <h1>📤 Expense Tracker</h1>
           <p>Track your spending against budgeted amounts</p>
         </div>
-        
+
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginLeft: 'auto' }}>
           {/* Refresh Button */}
-          <button 
+          <button
             className="btn-small"
             onClick={() => refetch()}
             disabled={isFetching}
@@ -429,13 +435,13 @@ function ExpenseTracker() {
           </button>
 
           {/* Clear Cache Button */}
-          <button 
+          <button
             className="btn-small"
             onClick={() => {
               queryClient.clear();
               window.location.reload();
             }}
-            style={{ 
+            style={{
               background: '#ff5555',
               color: '#fff'
             }}
@@ -443,11 +449,11 @@ function ExpenseTracker() {
           >
             🧹 Clear Cache
           </button>
-          
+
           {isPastMonth() && (
-            <span style={{ 
-              background: '#000', 
-              color: '#FFD600', 
+            <span style={{
+              background: '#000',
+              color: '#FFD600',
               padding: '6px 12px',
               fontSize: '12px',
               fontWeight: 700,
@@ -470,7 +476,7 @@ function ExpenseTracker() {
           <div className="empty-state">
             <h2>No Expense Categories</h2>
             <p>
-              No expense categories found for this period. 
+              No expense categories found for this period.
               Go to Settings → Categories to set up your budget categories with amounts.
             </p>
           </div>
@@ -478,10 +484,10 @@ function ExpenseTracker() {
           <>
             {/* Monthly Budgets */}
             {renderBudgetSection('Monthly Budget', 'monthly', budgetsByType['monthly'])}
-            
+
             {/* Yearly Budgets */}
             {renderBudgetSection('Yearly Budget', 'yearly', budgetsByType['yearly'])}
-            
+
             {/* Open Budgets */}
             {renderBudgetSection('Open Budget', 'open', budgetsByType['open'])}
           </>
@@ -490,7 +496,7 @@ function ExpenseTracker() {
 
       {/* Transactions Modal */}
       {showTransactionsModal && selectedCategory && (
-        <div 
+        <div
           onClick={handleCloseModal}
           style={{
             position: 'fixed',
@@ -506,7 +512,7 @@ function ExpenseTracker() {
             padding: '20px'
           }}
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff',
@@ -541,7 +547,7 @@ function ExpenseTracker() {
                 {selectedCategory.category_icon || '📦'}
               </div>
               <div style={{ flex: 1 }}>
-                <h2 style={{ 
+                <h2 style={{
                   margin: 0,
                   fontSize: '20px',
                   fontWeight: 700,
@@ -553,7 +559,7 @@ function ExpenseTracker() {
                   Transactions for {period}
                 </p>
               </div>
-              <button 
+              <button
                 onClick={handleCloseModal}
                 style={{
                   background: '#000',
@@ -571,8 +577,8 @@ function ExpenseTracker() {
             </div>
 
             {/* Modal Content */}
-            <div style={{ 
-              flex: 1, 
+            <div style={{
+              flex: 1,
               overflow: 'auto',
               padding: '20px'
             }}>
@@ -585,13 +591,13 @@ function ExpenseTracker() {
                   <p>No transactions found for this category.</p>
                 </div>
               ) : (
-                <table style={{ 
-                  width: '100%', 
+                <table style={{
+                  width: '100%',
                   borderCollapse: 'collapse',
                   fontSize: '14px'
                 }}>
                   <thead>
-                    <tr style={{ 
+                    <tr style={{
                       borderBottom: '3px solid #000',
                       textAlign: 'left'
                     }}>
@@ -604,39 +610,44 @@ function ExpenseTracker() {
                     {categoryTransactions
                       .sort((a, b) => new Date(b.tx_date || b.date) - new Date(a.tx_date || a.date))
                       .map((transaction, index) => (
-                      <tr 
-                        key={transaction.id || index}
-                        style={{ 
-                          borderBottom: '1px solid #ddd',
-                          background: index % 2 === 0 ? '#f9f9f9' : '#fff'
-                        }}
-                      >
-                        <td style={{ padding: '12px 8px' }}>
-                          {(() => {
-                            const dateStr = transaction.tx_date || transaction.date;
-                            if (!dateStr) return 'No date';
-                            const date = new Date(dateStr);
-                            if (isNaN(date.getTime())) return dateStr;
-                            return date.toLocaleDateString('en-MY', {
-                              day: 'numeric',
-                              month: 'long',
-                              year: 'numeric'
-                            });
-                          })()}
-                        </td>
-                        <td style={{ padding: '12px 8px' }}>
-                          {transaction.description}
-                        </td>
-                        <td style={{ 
-                          padding: '12px 8px', 
-                          textAlign: 'right',
-                          fontWeight: 600,
-                          color: parseFloat(transaction.amount) < 0 ? 'var(--red)' : 'var(--green)'
-                        }}>
-                          {formatCurrency(Math.abs(transaction.amount))}
-                        </td>
-                      </tr>
-                    ))}
+                        <tr
+                          key={transaction.id || index}
+                          style={{
+                            borderBottom: '1px solid #ddd',
+                            background: index % 2 === 0 ? '#f9f9f9' : '#fff'
+                          }}
+                        >
+                          <td style={{ padding: '12px 8px' }}>
+                            {(() => {
+                              const dateStr = transaction.budget_date || transaction.tx_date || transaction.date;
+                              if (!dateStr) return 'No date';
+                              const date = new Date(dateStr);
+                              if (isNaN(date.getTime())) return dateStr;
+                              return date.toLocaleDateString('en-MY', {
+                                day: 'numeric',
+                                month: 'long',
+                                year: 'numeric'
+                              });
+                            })()}
+                            {transaction.budget_date && transaction.budget_date.split('T')[0] !== transaction.tx_date.split('T')[0] && (
+                              <div style={{ fontSize: '10px', color: '#666' }}>
+                                Original: {new Date(transaction.tx_date).toLocaleDateString()}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: '12px 8px' }}>
+                            {transaction.description}
+                          </td>
+                          <td style={{
+                            padding: '12px 8px',
+                            textAlign: 'right',
+                            fontWeight: 600,
+                            color: parseFloat(transaction.amount) < 0 ? 'var(--red)' : 'var(--green)'
+                          }}>
+                            {formatCurrency(Math.abs(transaction.amount))}
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               )}
@@ -654,8 +665,8 @@ function ExpenseTracker() {
               <span style={{ fontSize: '14px', color: '#666' }}>
                 {categoryTransactions.length} transaction{categoryTransactions.length !== 1 ? 's' : ''}
               </span>
-              <div style={{ 
-                fontSize: '18px', 
+              <div style={{
+                fontSize: '18px',
                 fontWeight: 700,
                 display: 'flex',
                 alignItems: 'center',

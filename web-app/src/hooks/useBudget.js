@@ -9,9 +9,7 @@ export function useBudget(period, type) {
     queryFn: () => API.getBudgetForPeriod(period, type),
     // Only fetch when period is available
     enabled: !!period,
-    // No caching - always fetch fresh to ensure category names are current
-    staleTime: 0,
-    gcTime: 0,
+    // Let global defaults handle caching
   });
 }
 
@@ -35,7 +33,7 @@ export function useBudgetHistory() {
 // Update budget template
 export function useUpdateBudgetTemplate() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: API.updateBudgetTemplate,
     onSuccess: () => {
@@ -49,13 +47,13 @@ export function useUpdateBudgetTemplate() {
 // Update snapshot budget (historical)
 export function useUpdateSnapshotBudget() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: API.updateSnapshotBudget,
     onSuccess: (_, variables) => {
       // Invalidate specific budget query
-      queryClient.invalidateQueries({ 
-        queryKey: queryKeys.budget(variables.period, 'expense') 
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.budget(variables.period, 'expense')
       });
     },
   });

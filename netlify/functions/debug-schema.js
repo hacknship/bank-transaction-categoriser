@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+require('./utils/db');
 
 const getCorsHeaders = (headers = {}) => {
   const origin = headers.origin || headers.Origin || '*';

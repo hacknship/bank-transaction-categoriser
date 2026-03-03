@@ -1,17 +1,20 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useInfiniteTransactions, useTransactionTotals, useCategories, useSaveTransaction, useDeleteTransaction } from '../hooks/useTransactions';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../lib/queryClient';
+import { useAvailablePeriods } from '../hooks/useBudget';
+import { formatBudgetMonth, formatFullDate, getYearMonth, formatMMYYYY, parseMMYYYY } from '../utils/dateUtils';
 
 function Transactions() {
   const [filters, setFilters] = useState({
     account: '',
     category: '',
     search: '',
-    startDate: '',
-    endDate: ''
+    period: '' // YYYY-MM
   });
-  const [editingId, setEditingId] = useState(null);
-  const [showJsonModal, setShowJsonModal] = useState(false);
-  const [jsonContent, setJsonContent] = useState('');
+  const [editingCell, setEditingCell] = useState(null); // { txId, field }
+  const [activeMenuId, setActiveMenuId] = useState(null);
+  const [savingId, setSavingId] = useState(null); // { txId, field }
   const observerRef = useRef(null);
   const loadMoreRef = useRef(null);
 
@@ -20,8 +23,17 @@ function Transactions() {
     const f = {};
     if (filters.account) f.accountId = filters.account;
     if (filters.category) f.category = filters.category;
-    if (filters.startDate) f.startDate = filters.startDate;
-    if (filters.endDate) f.endDate = filters.endDate;
+
+    if (filters.period) {
+      // Use parseISO to avoid timezone shifts in boundary calculation
+      const date = parseISO(`${filters.period}-01`);
+      f.startDate = `${filters.period}-01`;
+
+      const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+      const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 0);
+      f.endDate = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+    }
+
     return f;
   }, [filters]);
 
@@ -32,18 +44,21 @@ function Transactions() {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-    refetch
-  } = useInfiniteTransactions(apiFilters);
+    isFetching
+  } = useInfiniteTransactions(apiFilters, 'false');
+
+  const queryClient = useQueryClient();
+
+  const { transactions = [], pagination = {} } = data || {};
 
   // Get totals from ALL transactions (not just loaded ones)
-  const { data: totalsData } = useTransactionTotals(apiFilters);
+  const { data: totalsData } = useTransactionTotals(apiFilters, 'false');
 
   const { data: categories = [] } = useCategories();
+  const { data: availablePeriods = [] } = useAvailablePeriods();
   const saveMutation = useSaveTransaction();
   const deleteMutation = useDeleteTransaction();
 
-  const transactions = data?.transactions || [];
-  const pagination = data?.pagination;
 
   // Extract unique accounts from loaded transactions
   const accounts = useMemo(() => {
@@ -84,7 +99,7 @@ function Transactions() {
   // Infinite scroll observer
   useEffect(() => {
     if (observerRef.current) observerRef.current.disconnect();
-    
+
     observerRef.current = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
         fetchNextPage();
@@ -98,18 +113,6 @@ function Transactions() {
     return () => observerRef.current?.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // Format date
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
-    return date.toLocaleDateString('en-MY', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    });
-  };
-
   // Format currency
   const formatCurrency = (amount) => {
     return `RM ${parseFloat(amount || 0).toLocaleString('en-MY', {
@@ -118,41 +121,48 @@ function Transactions() {
     })}`;
   };
 
-  function handleRefresh() {
-    refetch();
-  }
-
-  function exportJSON() {
-    const exportData = {};
-    transactions.forEach(t => {
-      exportData['mbt_' + t.tx_id] = t;
-    });
-    setJsonContent(JSON.stringify(exportData, null, 2));
-    setShowJsonModal(true);
+  async function handleRefresh() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.categories }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.periods })
+    ]);
   }
 
   async function updateTransaction(id, updates) {
     const tx = transactions.find(t => t.tx_id === id);
-    if (!tx) return;
-    
-    await saveMutation.mutateAsync({
-      txId: id,
-      accountId: tx.account_id,
-      txDate: tx.tx_date,
-      description: tx.description,
-      amount: tx.amount,
-      category: updates.category !== undefined ? updates.category : tx.category,
-      notes: updates.notes !== undefined ? updates.notes : tx.notes
-    });
-    
-    setEditingId(null);
+    console.log('updateTransaction called for:', id, 'updates:', updates, 'tx found:', !!tx);
+    if (!tx) {
+      console.warn('Transaction not found in local state!');
+      return;
+    }
+
+    if (updates.category !== undefined) setSavingId({ txId: id, field: 'category' });
+    if (updates.budgetDate !== undefined) setSavingId({ txId: id, field: 'budget_date' });
+    if (updates.notes !== undefined) setSavingId({ txId: id, field: 'notes' });
+
+    try {
+      await saveMutation.mutateAsync({
+        txId: id,
+        accountId: tx.account_id,
+        txDate: tx.tx_date,
+        description: tx.description,
+        amount: tx.amount,
+        category: updates.category !== undefined ? updates.category : tx.category,
+        notes: updates.notes !== undefined ? updates.notes : tx.notes,
+        budgetDate: updates.budgetDate !== undefined ? updates.budgetDate : tx.budget_date
+      });
+    } finally {
+      setSavingId(null);
+      setEditingCell(null);
+    }
   }
 
   async function deleteTransaction(txId) {
     if (!confirm('Delete this transaction?\n\nThis will remove the category and notes data from the database. The transaction will still appear on Maybank, but without categorization.')) {
       return;
     }
-    
+
     await deleteMutation.mutateAsync(txId);
   }
 
@@ -167,9 +177,23 @@ function Transactions() {
   return (
     <div>
       {/* Header */}
-      <header className="header">
-        <h1>💰 Transaction Data</h1>
-        <p>View and manage your categorized Maybank transactions from the cloud</p>
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1>💰 Transaction Data</h1>
+          <p>View and manage transactions in chronological order (bank data)</p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {isFetchingNextPage && <span className="loader-small" style={{ margin: 0 }}></span>}
+          <button
+            className="btn-small"
+            onClick={handleRefresh}
+            disabled={isFetching || isFetchingNextPage}
+            style={{ opacity: (isFetching || isFetchingNextPage) ? 0.7 : 1 }}
+          >
+            {(isFetching || isFetchingNextPage) ? '🔄 Refreshing...' : '🔄 Refresh Data'}
+          </button>
+        </div>
       </header>
 
       {/* Stats - Show totals from ALL transactions in database */}
@@ -192,7 +216,7 @@ function Transactions() {
         </div>
         <div className="stat-box">
           <div className="stat-label">Net Balance</div>
-          <div className="stat-value" style={{ 
+          <div className="stat-value" style={{
             color: displayTotals.net < 0 ? 'var(--red)' : displayTotals.net > 0 ? 'var(--green)' : '#000'
           }}>
             {formatCurrency(Math.abs(displayTotals.net))}
@@ -201,24 +225,19 @@ function Transactions() {
       </div>
 
       {/* Actions */}
-      <div className="actions">
-        <button className="btn btn-yellow" onClick={handleRefresh} disabled={isFetchingNextPage}>
-          {isFetchingNextPage ? '🔄 Loading...' : '🔄 Refresh Data'}
-        </button>
-        <button className="btn btn-black" onClick={exportJSON}>📥 Export JSON</button>
-        <span style={{ marginLeft: 'auto', fontSize: '14px', color: '#666' }}>
+      <div className="actions" style={{ justifyContent: 'flex-end' }}>
+        <span style={{ fontSize: '14px', color: '#666' }}>
           Loaded: {transactions.length.toLocaleString()} transactions
           {pagination?.hasMore && ' (scroll to load more)'}
         </span>
       </div>
 
-      {/* Filters */}
-      <div className="filter-bar" style={{ flexWrap: 'wrap', gap: '12px' }}>
-        <span className="filter-label">Account:</span>
-        <select 
-          className="filter-input" 
+      {/* Filters (Clean version - no labels, month/year picker) */}
+      <div className="filter-bar" style={{ flexWrap: 'wrap', gap: '12px', background: '#f5f5f5', padding: '16px' }}>
+        <select
+          className="filter-input"
           value={filters.account}
-          onChange={(e) => setFilters({...filters, account: e.target.value})}
+          onChange={(e) => setFilters({ ...filters, account: e.target.value })}
           style={{ minWidth: '140px' }}
         >
           <option value="">All Accounts</option>
@@ -226,12 +245,11 @@ function Transactions() {
             <option key={acc} value={acc}>{acc.slice(-4)}</option>
           ))}
         </select>
-        
-        <span className="filter-label">Category:</span>
-        <select 
-          className="filter-input" 
+
+        <select
+          className="filter-input"
           value={filters.category}
-          onChange={(e) => setFilters({...filters, category: e.target.value})}
+          onChange={(e) => setFilters({ ...filters, category: e.target.value })}
           style={{ minWidth: '180px' }}
         >
           <option value="">All Categories</option>
@@ -240,60 +258,61 @@ function Transactions() {
           ))}
         </select>
 
-        <span className="filter-label">From:</span>
-        <input 
-          type="date" 
-          className="filter-input" 
-          value={filters.startDate}
-          onChange={(e) => setFilters({...filters, startDate: e.target.value})}
-        />
+        <select
+          className="filter-input"
+          value={filters.period}
+          onChange={(e) => setFilters({ ...filters, period: e.target.value })}
+          style={{ minWidth: '160px' }}
+        >
+          <option value="">All Periods</option>
+          {availablePeriods.map(p => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
 
-        <span className="filter-label">To:</span>
-        <input 
-          type="date" 
-          className="filter-input" 
-          value={filters.endDate}
-          onChange={(e) => setFilters({...filters, endDate: e.target.value})}
-        />
-        
-        <span className="filter-label">Search:</span>
-        <input 
-          type="text" 
-          className="filter-input" 
-          placeholder="Description or notes..."
+        <input
+          type="text"
+          className="filter-input"
+          placeholder="Search description or notes..."
           value={filters.search}
-          onChange={(e) => setFilters({...filters, search: e.target.value})}
-          style={{ minWidth: '200px' }}
+          onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          style={{ minWidth: '240px', flex: 1 }}
         />
 
-        {(filters.account || filters.category || filters.startDate || filters.endDate || filters.search) && (
-          <button 
+        {(filters.account || filters.category || filters.period || filters.search) && (
+          <button
             className="btn-small"
-            onClick={() => setFilters({ account: '', category: '', search: '', startDate: '', endDate: '' })}
+            onClick={() => setFilters({ account: '', category: '', search: '', period: '' })}
             style={{ background: '#ff5555', color: '#fff' }}
           >
-            Clear Filters
+            Clear
           </button>
         )}
       </div>
 
       {/* Table */}
-      <div className="table-container">
-        {isLoading ? (
+      <div className="table-container" style={{ minHeight: '400px', position: 'relative' }}>
+        {isLoading && transactions.length === 0 ? (
           <div className="empty-state">
-            <h2>Loading...</h2>
+            <div className="loader" style={{ margin: '40px auto' }}></div>
+            <h2>Initial Loading...</h2>
           </div>
         ) : filteredTransactions.length === 0 ? (
           <div className="empty-state">
             <h2>No Transactions Found</h2>
             <p>
-              {filters.account || filters.category || filters.startDate || filters.endDate || filters.search
+              {filters.account || filters.category || filters.period || filters.search
                 ? 'Try adjusting your filters to see more results.'
-                : 'Go to your Maybank account page and categorize some transactions using the Chrome extension. They will appear here automatically.'}
+                : 'Go to your Maybank account page and categorize some transactions using the Chrome extension.'}
             </p>
           </div>
         ) : (
           <>
+            {(isLoading || isFetchingNextPage) && transactions.length > 0 && (
+              <div style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 10 }}>
+                <span className="loader-small"></span>
+              </div>
+            )}
             <table className="table">
               <thead>
                 <tr>
@@ -302,18 +321,25 @@ function Transactions() {
                   <th>Description</th>
                   <th>Amount</th>
                   <th>Category</th>
+                  <th title="Map transaction to a different budget month">Budget Month</th>
                   <th>Notes</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTransactions.map((tx) => {
-                  const isEditing = editingId === tx.tx_id;
                   const category = getCategory(tx.category);
-                  
+                  const isMenuOpen = activeMenuId === tx.tx_id;
+
+                  const handleFieldClick = (field) => {
+                    setEditingCell({ txId: tx.tx_id, field });
+                  };
+
+                  const isEditing = (field) => editingCell?.txId === tx.tx_id && editingCell?.field === field;
+
                   return (
                     <tr key={tx.tx_id}>
-                      <td className="cell-date">{formatDate(tx.tx_date)}</td>
+                      <td className="cell-date">{formatFullDate(tx.tx_date)}</td>
                       <td className="cell-account">
                         <span className="account-badge">{tx.account_id?.slice(-4) || 'N/A'}</span>
                       </td>
@@ -321,12 +347,13 @@ function Transactions() {
                       <td className={`cell-amount ${parseFloat(tx.amount) < 0 ? 'amount-negative' : 'amount-positive'}`}>
                         {parseFloat(tx.amount) < 0 ? '-' : ''}RM {Math.abs(parseFloat(tx.amount)).toFixed(2)}
                       </td>
-                      <td className="cell-category">
-                        {isEditing ? (
+                      <td className="cell-category" onClick={() => handleFieldClick('category')}>
+                        {isEditing('category') ? (
                           <select
-                            className="category-select"
-                            value={tx.category || ''}
+                            className="category-select-inline"
+                            defaultValue={tx.category || ''}
                             onChange={(e) => updateTransaction(tx.tx_id, { category: e.target.value })}
+                            onBlur={() => setEditingCell(null)}
                             autoFocus
                           >
                             <option value="">-- Select --</option>
@@ -335,41 +362,98 @@ function Transactions() {
                             ))}
                           </select>
                         ) : (
-                          <span className="category-badge">{category.icon} {tx.category || 'Uncategorized'}</span>
+                          <span className="category-badge clickable">
+                            {savingId?.txId === tx.tx_id && savingId?.field === 'category' ? '🔄 ' : ''}
+                            {category.icon} {tx.category || 'Uncategorized'}
+                          </span>
                         )}
                       </td>
-                      <td className="cell-notes">
-                        {isEditing ? (
+                      <td className="cell-budget-date" onClick={() => handleFieldClick('budget_date')}>
+                        {isEditing('budget_date') ? (
                           <input
                             type="text"
-                            className="notes-input"
+                            className="budget-month-input-inline"
+                            placeholder="MM/YYYY"
+                            defaultValue={formatMMYYYY(tx.budget_date || tx.tx_date)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                const newDate = parseMMYYYY(e.target.value);
+                                if (newDate) {
+                                  updateTransaction(tx.tx_id, { budgetDate: newDate });
+                                } else {
+                                  setEditingCell(null);
+                                }
+                              } else if (e.key === 'Escape') {
+                                setEditingCell(null);
+                              }
+                            }}
+                            onBlur={(e) => {
+                              // Only save if we didn't just hit Escape or Enter which already handled it
+                              if (editingCell?.field === 'budget_date') {
+                                const newDate = parseMMYYYY(e.target.value);
+                                if (newDate) {
+                                  updateTransaction(tx.tx_id, { budgetDate: newDate });
+                                } else {
+                                  setEditingCell(null);
+                                }
+                              }
+                            }}
+                            autoFocus
+                          />
+                        ) : (
+                          <span className={`budget-month-badge clickable ${tx.budget_date && getYearMonth(tx.budget_date) !== getYearMonth(tx.tx_date) ? 'budget-month-override' : ''}`}>
+                            {savingId?.txId === tx.tx_id && savingId?.field === 'budget_date' ? '🔄 ' : ''}
+                            {formatBudgetMonth(tx.budget_date || tx.tx_date)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="cell-notes" onClick={() => handleFieldClick('notes')}>
+                        {isEditing('notes') ? (
+                          <input
+                            type="text"
+                            className="notes-input-inline"
                             defaultValue={tx.notes || ''}
-                            onBlur={(e) => updateTransaction(tx.tx_id, { notes: e.target.value })}
+                            onBlur={(e) => {
+                              if (editingCell) updateTransaction(tx.tx_id, { notes: e.target.value });
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 updateTransaction(tx.tx_id, { notes: e.target.value });
+                              } else if (e.key === 'Escape') {
+                                setEditingCell(null);
                               }
                             }}
-                            autoFocus={!tx.category}
+                            autoFocus
                           />
                         ) : (
-                          tx.notes || '-'
+                          <span className="notes-text clickable">
+                            {savingId?.txId === tx.tx_id && savingId?.field === 'notes' ? '🔄 ' : ''}
+                            {tx.notes || '-'}
+                          </span>
                         )}
                       </td>
                       <td className="cell-actions">
-                        <button 
-                          className="btn-small btn-yellow" 
-                          onClick={() => setEditingId(isEditing ? null : tx.tx_id)}
-                        >
-                          {isEditing ? 'Done' : 'Edit'}
-                        </button>
-                        <button 
-                          className="btn-small btn-red" 
-                          onClick={() => deleteTransaction(tx.tx_id)}
-                          style={{ marginLeft: '8px' }}
-                        >
-                          🗑️
-                        </button>
+                        <div className="action-menu-container">
+                          <button
+                            className="action-menu-trigger"
+                            onClick={() => setActiveMenuId(isMenuOpen ? null : tx.tx_id)}
+                          >
+                            ⋮
+                          </button>
+                          {isMenuOpen && (
+                            <div className="action-dropdown">
+                              <button
+                                className="dropdown-item delete"
+                                onClick={() => {
+                                  deleteTransaction(tx.tx_id);
+                                  setActiveMenuId(null);
+                                }}
+                              >
+                                🗑️ Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -378,10 +462,10 @@ function Transactions() {
             </table>
 
             {/* Load more sentinel */}
-            <div 
+            <div
               ref={loadMoreRef}
-              style={{ 
-                padding: '20px', 
+              style={{
+                padding: '20px',
                 textAlign: 'center',
                 visibility: hasNextPage ? 'visible' : 'hidden'
               }}
@@ -396,20 +480,6 @@ function Transactions() {
         )}
       </div>
 
-      {/* JSON Modal */}
-      {showJsonModal && (
-        <div className="modal-overlay" onClick={() => setShowJsonModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Transaction JSON</h2>
-              <button className="modal-close" onClick={() => setShowJsonModal(false)}>×</button>
-            </div>
-            <div className="modal-body">
-              <pre>{jsonContent}</pre>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

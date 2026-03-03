@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+require('./utils/db');
 
 // CORS headers - temporarily using wildcard for debugging
 const getCorsHeaders = (headers = {}) => {

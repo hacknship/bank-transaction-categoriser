@@ -1,32 +1,22 @@
-import { useState, useEffect } from 'react';
-import { API } from '../utils/api';
+import { useState } from 'react';
+import { useBudgetHistory } from '../hooks/useBudget';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../lib/queryClient';
 
 function BudgetHistory() {
-  const [historyData, setHistoryData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const { data: historyData, isLoading: loading, isFetching } = useBudgetHistory();
   const [selectedVersion, setSelectedVersion] = useState(null);
   const [viewMode, setViewMode] = useState('timeline'); // 'timeline' or 'versions'
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
-  const loadHistory = async () => {
-    setLoading(true);
-    try {
-      const data = await API.getBudgetHistory();
-      setHistoryData(data);
-    } catch (error) {
-      console.error('Failed to load budget history:', error);
-    } finally {
-      setLoading(false);
-    }
+  const handleRefresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.budgetHistory });
   };
 
   const formatCurrency = (amount) => {
-    return `RM ${parseFloat(amount || 0).toLocaleString('en-MY', { 
+    return `RM ${parseFloat(amount || 0).toLocaleString('en-MY', {
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0 
+      maximumFractionDigits: 0
     })}`;
   };
 
@@ -53,21 +43,32 @@ function BudgetHistory() {
   return (
     <div>
       {/* Header */}
-      <header className="header">
-        <h1>📜 Budget History</h1>
-        <p>Track how your budget has evolved over time</p>
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1>📜 Budget History</h1>
+          <p>Track how your budget has evolved over time</p>
+        </div>
+
+        <button
+          className="btn-small"
+          onClick={handleRefresh}
+          disabled={isFetching}
+          style={{ opacity: isFetching ? 0.7 : 1 }}
+        >
+          {isFetching ? '🔄 Refreshing...' : '🔄 Refresh Data'}
+        </button>
       </header>
 
       {/* View Toggle */}
       <div className="filter-bar" style={{ background: '#f5f5f5' }}>
         <span className="filter-label">View:</span>
-        <button 
+        <button
           className={`btn-small ${viewMode === 'timeline' ? 'btn-yellow' : ''}`}
           onClick={() => setViewMode('timeline')}
         >
           📅 Timeline
         </button>
-        <button 
+        <button
           className={`btn-small ${viewMode === 'versions' ? 'btn-yellow' : ''}`}
           onClick={() => setViewMode('versions')}
         >
@@ -90,8 +91,8 @@ function BudgetHistory() {
             alignItems: 'center',
             marginBottom: '16px'
           }}>
-            <h2 style={{ 
-              margin: 0, 
+            <h2 style={{
+              margin: 0,
               fontSize: '18px',
               textTransform: 'uppercase',
               letterSpacing: '1px'
@@ -119,7 +120,7 @@ function BudgetHistory() {
               gap: '12px'
             }}>
               {historyData?.currentTemplates?.map(template => (
-                <div 
+                <div
                   key={template.id}
                   style={{
                     background: '#fff',
@@ -151,7 +152,7 @@ function BudgetHistory() {
             boxShadow: '6px 6px 0 #000',
             padding: '24px'
           }}>
-            <h2 style={{ 
+            <h2 style={{
               marginTop: 0,
               marginBottom: '24px',
               fontSize: '18px',
@@ -166,13 +167,13 @@ function BudgetHistory() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {historyData.periods.map((period, index) => {
-                  const percentUsed = period.total_budgeted > 0 
-                    ? (Math.abs(period.total_spent) / period.total_budgeted) * 100 
+                  const percentUsed = period.total_budgeted > 0
+                    ? (Math.abs(period.total_spent) / period.total_budgeted) * 100
                     : 0;
                   const isOverBudget = Math.abs(period.total_spent) > period.total_budgeted;
 
                   return (
-                    <div 
+                    <div
                       key={period.period}
                       style={{
                         background: '#fff',
@@ -186,9 +187,9 @@ function BudgetHistory() {
                       }}
                     >
                       <div style={{ fontWeight: 700 }}>
-                        {new Date(period.period_date).toLocaleDateString('en-MY', { 
-                          month: 'short', 
-                          year: 'numeric' 
+                        {new Date(period.period_date).toLocaleDateString('en-MY', {
+                          month: 'short',
+                          year: 'numeric'
                         })}
                       </div>
 
@@ -202,8 +203,8 @@ function BudgetHistory() {
                           <div style={{
                             height: '100%',
                             width: `${Math.min(100, percentUsed)}%`,
-                            background: isOverBudget ? 'var(--red)' : 
-                                       percentUsed >= 80 ? 'var(--yellow)' : 'var(--green)'
+                            background: isOverBudget ? 'var(--red)' :
+                              percentUsed >= 80 ? 'var(--yellow)' : 'var(--green)'
                           }} />
                         </div>
                       </div>
@@ -221,7 +222,7 @@ function BudgetHistory() {
                         <div style={{ fontSize: '11px', color: '#666', textTransform: 'uppercase' }}>
                           Spent
                         </div>
-                        <div style={{ 
+                        <div style={{
                           fontWeight: 700,
                           color: isOverBudget ? 'var(--red)' : 'inherit'
                         }}>
@@ -229,7 +230,7 @@ function BudgetHistory() {
                         </div>
                       </div>
 
-                      <div style={{ 
+                      <div style={{
                         textAlign: 'center',
                         background: isOverBudget ? 'var(--red)' : '#f5f5f5',
                         color: isOverBudget ? '#fff' : '#000',
@@ -254,7 +255,7 @@ function BudgetHistory() {
             boxShadow: '6px 6px 0 #000',
             padding: '24px'
           }}>
-            <h2 style={{ 
+            <h2 style={{
               marginTop: 0,
               marginBottom: '24px',
               fontSize: '18px',
@@ -269,7 +270,7 @@ function BudgetHistory() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {historyData.versions.map((version, index) => (
-                  <div 
+                  <div
                     key={version.id}
                     style={{
                       background: selectedVersion === version.id ? '#FFD600' : '#fff',
@@ -326,9 +327,9 @@ function BudgetHistory() {
                           <strong>Created:</strong> {new Date(version.created_at).toLocaleString()}
                         </p>
                         <p style={{ fontSize: '13px', marginTop: '8px' }}>
-                          This version was active from {formatDate(version.effective_from)} 
+                          This version was active from {formatDate(version.effective_from)}
                           {' '}to {formatDate(version.effective_to)}.
-                          It covered {version.period_count} monthly periods 
+                          It covered {version.period_count} monthly periods
                           with {version.category_count} budget categories.
                         </p>
                       </div>

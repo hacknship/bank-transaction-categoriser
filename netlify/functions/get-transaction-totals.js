@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+require('./utils/db');
 
 const getCorsHeaders = (headers = {}) => {
   const origin = headers.origin || headers.Origin || '*';
@@ -36,7 +37,8 @@ exports.handler = async (event, context) => {
     await client.connect();
 
     const params = event.queryStringParameters || {};
-    const { accountId, category, startDate, endDate } = params;
+    const { accountId, category, startDate, endDate, useBudgetDate = 'false' } = params;
+    const isBudgetMode = useBudgetDate === 'true';
 
     // Build WHERE clause
     const conditions = [];
@@ -48,18 +50,29 @@ exports.handler = async (event, context) => {
     }
     if (category) {
       queryParams.push(category);
-      conditions.push(`category = $${queryParams.length}`);
+      conditions.push(`LOWER(category) = LOWER($${queryParams.length})`);
     }
+
+    const dateField = isBudgetMode ? 'COALESCE(budget_date, tx_date)' : 'tx_date';
+
     if (startDate) {
       queryParams.push(startDate);
-      conditions.push(`tx_date >= $${queryParams.length}`);
+      if (isBudgetMode) {
+        conditions.push(`DATE_TRUNC('month', ${dateField}::date) >= DATE_TRUNC('month', $${queryParams.length}::date)`);
+      } else {
+        conditions.push(`${dateField} >= $${queryParams.length}`);
+      }
     }
     if (endDate) {
       queryParams.push(endDate);
-      conditions.push(`tx_date <= $${queryParams.length}`);
+      if (isBudgetMode) {
+        conditions.push(`DATE_TRUNC('month', ${dateField}::date) <= DATE_TRUNC('month', $${queryParams.length}::date)`);
+      } else {
+        conditions.push(`${dateField} <= $${queryParams.length}`);
+      }
     }
 
-    const whereClause = conditions.length > 0 
+    const whereClause = conditions.length > 0
       ? 'WHERE ' + conditions.join(' AND ')
       : '';
 
@@ -110,7 +123,7 @@ exports.handler = async (event, context) => {
 
   } catch (error) {
     console.error('Database error:', error.message);
-    try { await client.end(); } catch (e) {}
+    try { await client.end(); } catch (e) { }
     return {
       statusCode: 500,
       headers,

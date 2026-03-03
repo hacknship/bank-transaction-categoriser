@@ -19,6 +19,7 @@ CREATE TABLE transactions (
     account_id VARCHAR(100),
     account_name VARCHAR(255),
     tx_date DATE NOT NULL,
+    budget_date DATE,
     description TEXT,
     amount DECIMAL(12,2),
     category VARCHAR(100),

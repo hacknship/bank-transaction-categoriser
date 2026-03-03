@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+require('./utils/db');
 
 const getCorsHeaders = (headers = {}) => {
   const origin = headers.origin || headers.Origin || '*';
@@ -43,19 +44,20 @@ exports.handler = async (event, context) => {
   try {
     await client.connect();
 
-    const { txId, accountId, txDate, description, amount, category, notes } = JSON.parse(event.body);
+    const { txId, accountId, txDate, description, amount, category, notes, budgetDate } = JSON.parse(event.body);
 
     const result = await client.query(`
       INSERT INTO transactions 
-        (tx_id, account_id, tx_date, description, amount, category, notes)
+        (tx_id, account_id, tx_date, description, amount, category, notes, budget_date)
       VALUES 
-        ($1, $2, $3, $4, $5, $6, $7)
+        ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (tx_id) DO UPDATE SET
         category = EXCLUDED.category,
         notes = EXCLUDED.notes,
+        budget_date = EXCLUDED.budget_date,
         updated_at = NOW()
       RETURNING *
-    `, [txId, accountId, txDate, description, amount, category, notes]);
+    `, [txId, accountId, txDate, description, amount, category, notes, budgetDate]);
 
     await client.end();
 
@@ -67,7 +69,7 @@ exports.handler = async (event, context) => {
 
   } catch (error) {
     console.error('Database error:', error.message);
-    try { await client.end(); } catch (e) {}
+    try { await client.end(); } catch (e) { }
     return {
       statusCode: 500,
       headers,

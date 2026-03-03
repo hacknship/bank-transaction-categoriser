@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+require('./utils/db');
 
 const getCorsHeaders = (headers = {}) => {
   const origin = headers.origin || headers.Origin || '*';
@@ -35,7 +36,8 @@ exports.handler = async (event, context) => {
   try {
     await client.connect();
 
-    const { accountId, category, limit = '20', offset = '0', startDate, endDate } = event.queryStringParameters || {};
+    const { accountId, category, limit = '20', offset = '0', startDate, endDate, useBudgetDate = 'false' } = event.queryStringParameters || {};
+    const isBudgetMode = useBudgetDate === 'true';
 
     let query = 'SELECT * FROM transactions';
     const params = [];
@@ -47,22 +49,39 @@ exports.handler = async (event, context) => {
     }
     if (category) {
       params.push(category);
-      conditions.push(`category = $${params.length}`);
+      conditions.push(`LOWER(category) = LOWER($${params.length})`);
     }
+
+    // Date Filtering based on mode
+    const dateField = isBudgetMode ? 'COALESCE(budget_date, tx_date)' : 'tx_date';
+
     if (startDate) {
       params.push(startDate);
-      conditions.push(`tx_date >= $${params.length}`);
+      if (isBudgetMode) {
+        conditions.push(`DATE_TRUNC('month', ${dateField}::date) >= DATE_TRUNC('month', $${params.length}::date)`);
+      } else {
+        conditions.push(`${dateField} >= $${params.length}`);
+      }
     }
     if (endDate) {
       params.push(endDate);
-      conditions.push(`tx_date <= $${params.length}`);
+      if (isBudgetMode) {
+        conditions.push(`DATE_TRUNC('month', ${dateField}::date) <= DATE_TRUNC('month', $${params.length}::date)`);
+      } else {
+        conditions.push(`${dateField} <= $${params.length}`);
+      }
     }
 
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ` ORDER BY tx_date DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    // Sorting: Budget mode sorts by budget date, Audit mode (default) sorts by bank transaction date
+    if (isBudgetMode) {
+      query += ` ORDER BY COALESCE(budget_date, tx_date) DESC, tx_date DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    } else {
+      query += ` ORDER BY tx_date DESC, tx_id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    }
     params.push(parseInt(limit), parseInt(offset));
 
     const result = await client.query(query, params);
@@ -71,7 +90,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         transactions: result.rows,
         pagination: {
           limit: parseInt(limit),
@@ -83,7 +102,7 @@ exports.handler = async (event, context) => {
 
   } catch (error) {
     console.error('Database error:', error.message);
-    try { await client.end(); } catch (e) {}
+    try { await client.end(); } catch (e) { }
     return {
       statusCode: 500,
       headers,
