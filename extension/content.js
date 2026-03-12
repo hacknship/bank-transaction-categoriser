@@ -8,6 +8,10 @@
   // Ghost Database API
   const API_BASE = 'https://ss-transactions-tracker.netlify.app/.netlify/functions';
   
+  // API Key for authentication - UPDATE THIS when deploying
+  // This should match the API_KEY in your Netlify environment variables
+  const API_KEY = '095a8898406ee59062c190385571917488588231e8a1492677f4d7ca8c56185c';
+  
   // NO CACHING - always fetch fresh data
   let processedRows = new Set();
   let kbRow = -1;
@@ -200,7 +204,7 @@
   async function fetchCategories() {
     try {
       // Add cache-busting query param
-      const res = await fetch(`${API_BASE}/get-categories?t=${Date.now()}`);
+      const res = await fetch(`${API_BASE}/get-categories?key=${API_KEY}&t=${Date.now()}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       const cats = (data.categories || []).map(c => c.name);
@@ -215,7 +219,7 @@
   // Fetch saved transactions from Ghost DB
   async function fetchTransactions(accountId) {
     try {
-      const url = `${API_BASE}/get-transactions?accountId=${encodeURIComponent(accountId)}&limit=500&t=${Date.now()}`;
+      const url = `${API_BASE}/get-transactions?key=${API_KEY}&accountId=${encodeURIComponent(accountId)}&limit=500&t=${Date.now()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch transactions');
       const data = await res.json();
@@ -266,7 +270,7 @@
   // Save transaction to Ghost DB
   async function saveTx(txId, data) {
     try {
-      const res = await fetch(`${API_BASE}/save-transaction`, {
+      const res = await fetch(`${API_BASE}/save-transaction?key=${API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

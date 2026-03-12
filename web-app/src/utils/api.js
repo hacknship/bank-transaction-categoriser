@@ -1,7 +1,20 @@
 const API_BASE = '/.netlify/functions';
 
+// API Key for authentication - set via Netlify environment variable
+// In development, you can set VITE_API_KEY in .env.local
+// In production, set API_KEY in Netlify environment variables
+const API_KEY = import.meta.env.VITE_API_KEY || '';
+
 async function fetchAPI(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  // Add API key to URL for GET requests, or headers for all requests
+  const url = new URL(`${API_BASE}${endpoint}`, window.location.origin);
+  
+  // Add API key as query parameter for all requests
+  if (API_KEY) {
+    url.searchParams.append('key', API_KEY);
+  }
+  
+  const response = await fetch(url.toString(), {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -10,7 +23,8 @@ async function fetchAPI(endpoint, options = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `API error: ${response.status}`);
   }
 
   return response.json();

@@ -1,12 +1,13 @@
 const { Client } = require('pg');
 require('./utils/db');
+const { validateApiKey, unauthorizedResponse } = require('./utils/auth');
 
-// CORS headers - temporarily using wildcard for debugging
+// CORS headers
 const getCorsHeaders = (headers = {}) => {
   const origin = headers.origin || headers.Origin || '*';
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Content-Type': 'application/json'
   };
@@ -18,6 +19,12 @@ exports.handler = async (event, context) => {
   // Handle preflight
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers, body: '' };
+  }
+
+  // Validate API key (allow health check key for this endpoint)
+  const auth = validateApiKey(event, true);
+  if (!auth.valid) {
+    return unauthorizedResponse(auth.error, headers);
   }
 
   // Validate DATABASE_URL is set
